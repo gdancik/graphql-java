@@ -2,21 +2,16 @@ package graphql.execution.instrumentation.dataloader
 
 import graphql.ExecutionInput
 import graphql.GraphQL
-import graphql.incremental.IncrementalExecutionResult
 import org.dataloader.DataLoaderRegistry
-import spock.lang.Ignore
 import spock.lang.Specification
+import spock.lang.Unroll
 
 import static graphql.ExperimentalApi.ENABLE_INCREMENTAL_SUPPORT
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.assertIncrementalExpensiveData
+import static graphql.execution.instrumentation.dataloader.DataLoaderDispatchingContextKeys.ENABLE_DATA_LOADER_CHAINING
+import static graphql.execution.instrumentation.dataloader.DataLoaderDispatchingContextKeys.ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
 import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.expectedExpensiveData
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.expectedInitialDeferredData
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getDeferredQuery
 import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getExpectedData
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getExpectedListOfDeferredData
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getExpensiveDeferredQuery
 import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getExpensiveQuery
-import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getIncrementalResults
 import static graphql.execution.instrumentation.dataloader.DataLoaderPerformanceData.getQuery
 
 class DataLoaderPerformanceTest extends Specification {
@@ -32,12 +27,14 @@ class DataLoaderPerformanceTest extends Specification {
         graphQL = dataLoaderPerformanceData.setupGraphQL()
     }
 
+    @Unroll
     def "760 ensure data loader is performant for lists"() {
         when:
         ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(query)
+                .query(getQuery())
                 .dataLoaderRegistry(dataLoaderRegistry)
                 .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): incrementalSupport])
+                .graphQLContext(contextKey == null ? Collections.emptyMap() : [(contextKey): true])
                 .build()
         def result = graphQL.execute(executionInput)
 
@@ -49,30 +46,47 @@ class DataLoaderPerformanceTest extends Specification {
         batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() == 1
 
         where:
-        incrementalSupport << [true, false]
+        incrementalSupport | contextKey
+        false              | ENABLE_DATA_LOADER_CHAINING
+        true               | ENABLE_DATA_LOADER_CHAINING
+        false              | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        true               | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        false              | null
+        true               | null
     }
 
+    @Unroll
     def "970 ensure data loader is performant for multiple field with lists"() {
 
         when:
 
+        batchCompareDataFetchers.useSynchronizedFetching(2)
+
         ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(expensiveQuery)
+                .query(getExpensiveQuery(false))
                 .dataLoaderRegistry(dataLoaderRegistry)
                 .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): incrementalSupport])
+                .graphQLContext(contextKey == null ? Collections.emptyMap() : [(contextKey): true])
                 .build()
         def result = graphQL.execute(executionInput)
 
         then:
         result.data == expectedExpensiveData
 
-        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() <= 2
-        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() <= 2
+        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() == 1
+        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() == 1
 
         where:
-        incrementalSupport << [true, false]
+        incrementalSupport | contextKey
+        false              | ENABLE_DATA_LOADER_CHAINING
+        true               | ENABLE_DATA_LOADER_CHAINING
+        false              | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        true               | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        false              | null
+        true               | null
     }
 
+    @Unroll
     def "ensure data loader is performant for lists using async batch loading"() {
 
         when:
@@ -80,9 +94,10 @@ class DataLoaderPerformanceTest extends Specification {
         batchCompareDataFetchers.useAsyncBatchLoading(true)
 
         ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(query)
+                .query(getQuery())
                 .dataLoaderRegistry(dataLoaderRegistry)
                 .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): incrementalSupport])
+                .graphQLContext(contextKey == null ? Collections.emptyMap() : [(contextKey): true])
                 .build()
 
         def result = graphQL.execute(executionInput)
@@ -95,19 +110,28 @@ class DataLoaderPerformanceTest extends Specification {
         batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() == 1
 
         where:
-        incrementalSupport << [true, false]
+        incrementalSupport | contextKey
+        false              | ENABLE_DATA_LOADER_CHAINING
+        true               | ENABLE_DATA_LOADER_CHAINING
+        false              | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        true               | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        false              | null
+        true               | null
     }
 
+    @Unroll
     def "970 ensure data loader is performant for multiple field with lists using async batch loading"() {
 
         when:
 
         batchCompareDataFetchers.useAsyncBatchLoading(true)
+        batchCompareDataFetchers.useSynchronizedFetching(2)
 
         ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(expensiveQuery)
+                .query(getExpensiveQuery(false))
                 .dataLoaderRegistry(dataLoaderRegistry)
                 .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): incrementalSupport])
+                .graphQLContext(contextKey == null ? Collections.emptyMap() : [(contextKey): true])
                 .build()
 
         def result = graphQL.execute(executionInput)
@@ -115,81 +139,16 @@ class DataLoaderPerformanceTest extends Specification {
         then:
         result.data == expectedExpensiveData
 
-        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() <= 2
-        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() <= 2
+        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() == 1
+        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() == 1
 
         where:
-        incrementalSupport << [true, false]
-    }
-
-    def "data loader will not work with deferred queries"() {
-        when:
-        ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(deferredQuery)
-                .dataLoaderRegistry(dataLoaderRegistry)
-                .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): true])
-                .build()
-
-        def result = graphQL.execute(executionInput)
-        println(result);
-
-        then:
-        def exception = thrown(UnsupportedOperationException)
-        exception.message == "Data Loaders cannot be used to resolve deferred fields"
-    }
-
-    @Ignore("Resolution of deferred fields via Data loaders is not yet supported")
-    def "data loader will work with deferred queries"() {
-
-        when:
-
-        ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(deferredQuery)
-                .dataLoaderRegistry(dataLoaderRegistry)
-                .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): true])
-                .build()
-
-        IncrementalExecutionResult result = graphQL.execute(executionInput)
-
-        then:
-        result.toSpecification() == expectedInitialDeferredData
-
-        when:
-        def incrementalResults = getIncrementalResults(result)
-
-        then:
-        incrementalResults == expectedListOfDeferredData
-
-        //  With deferred results, we don't achieve the same efficiency.
-        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() == 3
-        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() == 3
-    }
-
-    @Ignore("Resolution of deferred fields via Data loaders is not yet supported")
-    def "data loader will work with deferred queries on multiple levels deep"() {
-
-        when:
-
-        ExecutionInput executionInput = ExecutionInput.newExecutionInput()
-                .query(expensiveDeferredQuery)
-                .dataLoaderRegistry(dataLoaderRegistry)
-                .graphQLContext([(ENABLE_INCREMENTAL_SUPPORT): true])
-                .build()
-
-        IncrementalExecutionResult result = graphQL.execute(executionInput)
-
-        then:
-        result.toSpecification() == expectedInitialDeferredData
-
-        when:
-        def incrementalResults = getIncrementalResults(result)
-
-        then:
-        assertIncrementalExpensiveData(incrementalResults)
-
-        // With deferred results, we don't achieve the same efficiency.
-        // The final number of loader calls is non-deterministic, so we can't assert an exact number.
-        batchCompareDataFetchers.departmentsForShopsBatchLoaderCounter.get() >= 3
-        batchCompareDataFetchers.productsForDepartmentsBatchLoaderCounter.get() >= 3
+        incrementalSupport | contextKey
+        false              | ENABLE_DATA_LOADER_CHAINING
+        true               | ENABLE_DATA_LOADER_CHAINING
+        false              | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        true               | ENABLE_DATA_LOADER_EXHAUSTED_DISPATCHING
+        false              | null
+        true               | null
     }
 }

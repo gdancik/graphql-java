@@ -6,6 +6,7 @@ import com.google.common.collect.ImmutableMap;
 import graphql.Internal;
 import graphql.PublicApi;
 import graphql.collect.ImmutableKit;
+import graphql.util.Interning;
 import graphql.util.TraversalControl;
 import graphql.util.TraverserContext;
 
@@ -31,7 +32,7 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
     private final String name;
     private final String alias;
     private final ImmutableList<Argument> arguments;
-    private final ImmutableList<Directive> directives;
+    private final NodeUtil.DirectivesHolder directives;
     private final SelectionSet selectionSet;
 
     public static final String CHILD_ARGUMENTS = "arguments";
@@ -50,10 +51,10 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
                     IgnoredChars ignoredChars,
                     Map<String, String> additionalData) {
         super(sourceLocation, comments, ignoredChars, additionalData);
-        this.name = name;
+        this.name = name == null ? null : Interning.intern(name);
         this.alias = alias;
         this.arguments = ImmutableList.copyOf(arguments);
-        this.directives = ImmutableList.copyOf(directives);
+        this.directives = NodeUtil.DirectivesHolder.of(directives);
         this.selectionSet = selectionSet;
     }
 
@@ -102,7 +103,7 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
     public List<Node> getChildren() {
         List<Node> result = new ArrayList<>();
         result.addAll(arguments);
-        result.addAll(directives);
+        result.addAll(directives.getDirectives());
         if (selectionSet != null) {
             result.add(selectionSet);
         }
@@ -113,7 +114,7 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
     public NodeChildrenContainer getNamedChildren() {
         return NodeChildrenContainer.newNodeChildrenContainer()
                 .children(CHILD_ARGUMENTS, arguments)
-                .children(CHILD_DIRECTIVES, directives)
+                .children(CHILD_DIRECTIVES, directives.getDirectives())
                 .child(CHILD_SELECTION_SET, selectionSet)
                 .build();
     }
@@ -146,7 +147,22 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
 
     @Override
     public List<Directive> getDirectives() {
-        return directives;
+        return directives.getDirectives();
+    }
+
+    @Override
+    public Map<String, List<Directive>> getDirectivesByName() {
+        return directives.getDirectivesByName();
+    }
+
+    @Override
+    public List<Directive> getDirectives(String directiveName) {
+        return directives.getDirectives(directiveName);
+    }
+
+    @Override
+    public boolean hasDirective(String directiveName) {
+        return directives.hasDirective(directiveName);
     }
 
     @Override
@@ -174,7 +190,7 @@ public class Field extends AbstractNode<Field> implements Selection<Field>, Sele
         return new Field(name,
                 alias,
                 deepCopy(arguments),
-                deepCopy(directives),
+                deepCopy(directives.getDirectives()),
                 deepCopy(selectionSet),
                 getSourceLocation(),
                 getComments(),

@@ -7,9 +7,9 @@ import graphql.language.Directive;
 import graphql.schema.GraphQLArgument;
 import graphql.schema.GraphQLDirective;
 import graphql.schema.GraphqlTypeBuilder;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,13 +41,13 @@ public class QueryAppliedDirective {
 
     private QueryAppliedDirective(String name, Directive definition, Collection<QueryAppliedDirectiveArgument> arguments) {
         assertValidName(name);
-        assertNotNull(arguments, () -> "arguments can't be null");
+        assertNotNull(arguments, "arguments can't be null");
         this.name = name;
         this.arguments = ImmutableList.copyOf(arguments);
         this.definition = definition;
     }
 
-    @NotNull
+    @NonNull
     public String getName() {
         return name;
     }
@@ -122,13 +122,13 @@ public class QueryAppliedDirective {
         }
 
         public Builder argument(QueryAppliedDirectiveArgument argument) {
-            assertNotNull(argument, () -> "argument must not be null");
+            assertNotNull(argument,"argument must not be null");
             arguments.put(argument.getName(), argument);
             return this;
         }
 
         public Builder replaceArguments(List<QueryAppliedDirectiveArgument> arguments) {
-            assertNotNull(arguments, () -> "arguments must not be null");
+            assertNotNull(arguments, "arguments must not be null");
             this.arguments.clear();
             for (QueryAppliedDirectiveArgument argument : arguments) {
                 this.arguments.put(argument.getName(), argument);

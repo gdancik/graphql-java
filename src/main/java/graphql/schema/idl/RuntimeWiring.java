@@ -7,18 +7,20 @@ import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLSchema;
 import graphql.schema.GraphqlTypeComparatorRegistry;
 import graphql.schema.TypeResolver;
+import graphql.schema.idl.errors.StrictModeWiringException;
 import graphql.schema.visibility.GraphqlFieldVisibility;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
+import org.jspecify.annotations.NullUnmarked;
 
 import static graphql.Assert.assertNotNull;
 import static graphql.schema.visibility.DefaultGraphqlFieldVisibility.DEFAULT_FIELD_VISIBILITY;
+import static java.lang.String.format;
 
 /**
  * A runtime wiring is a specification of data fetchers, type resolvers and custom scalars that are needed
@@ -35,14 +37,14 @@ public class RuntimeWiring {
     private final List<SchemaDirectiveWiring> directiveWiring;
     private final WiringFactory wiringFactory;
     private final Map<String, EnumValuesProvider> enumValuesProviders;
-    private final Collection<SchemaGeneratorPostProcessing> schemaGeneratorPostProcessings;
     private final GraphqlFieldVisibility fieldVisibility;
     private final GraphQLCodeRegistry codeRegistry;
     private final GraphqlTypeComparatorRegistry comparatorRegistry;
 
     /**
      * This is a Runtime wiring which provides mocked types resolver
-     * and scalars. Useful for testing only.
+     * and scalars. It is useful for testing only, for example for creating schemas
+     * that can be inspected but not executed on.
      */
     public static final RuntimeWiring MOCKED_WIRING = RuntimeWiring
             .newRuntimeWiring()
@@ -57,7 +59,6 @@ public class RuntimeWiring {
         this.directiveWiring = builder.directiveWiring;
         this.wiringFactory = builder.wiringFactory;
         this.enumValuesProviders = builder.enumValuesProviders;
-        this.schemaGeneratorPostProcessings = builder.schemaGeneratorPostProcessings;
         this.fieldVisibility = builder.fieldVisibility;
         this.codeRegistry = builder.codeRegistry;
         this.comparatorRegistry = builder.comparatorRegistry;
@@ -85,7 +86,6 @@ public class RuntimeWiring {
         builder.directiveWiring.addAll(originalRuntimeWiring.directiveWiring);
         builder.wiringFactory = originalRuntimeWiring.wiringFactory;
         builder.enumValuesProviders.putAll(originalRuntimeWiring.enumValuesProviders);
-        builder.schemaGeneratorPostProcessings.addAll(originalRuntimeWiring.schemaGeneratorPostProcessings);
         builder.fieldVisibility = originalRuntimeWiring.fieldVisibility;
         builder.codeRegistry = originalRuntimeWiring.codeRegistry;
         builder.comparatorRegistry = originalRuntimeWiring.comparatorRegistry;
@@ -118,7 +118,28 @@ public class RuntimeWiring {
         return dataFetchers;
     }
 
+    /**
+     * This is deprecated because the name has the wrong plural case.
+     *
+     * @param typeName the type for fetch a map of per field data fetchers for
+     *
+     * @return a map of field data fetchers for a type
+     *
+     * @deprecated See {@link #getDataFetchersForType(String)}
+     */
+    @Deprecated(since = "2024-04-28")
     public Map<String, DataFetcher> getDataFetcherForType(String typeName) {
+        return dataFetchers.computeIfAbsent(typeName, k -> new LinkedHashMap<>());
+    }
+
+    /**
+     * This returns a map of the data fetchers per field on that named type.
+     *
+     * @param typeName the type for fetch a map of per field data fetchers for
+     *
+     * @return a map of field data fetchers for a type
+     */
+    public Map<String, DataFetcher> getDataFetchersForType(String typeName) {
         return dataFetchers.computeIfAbsent(typeName, k -> new LinkedHashMap<>());
     }
 
@@ -150,15 +171,12 @@ public class RuntimeWiring {
         return directiveWiring;
     }
 
-    public Collection<SchemaGeneratorPostProcessing> getSchemaGeneratorPostProcessings() {
-        return schemaGeneratorPostProcessings;
-    }
-
     public GraphqlTypeComparatorRegistry getComparatorRegistry() {
         return comparatorRegistry;
     }
 
     @PublicApi
+    @NullUnmarked
     public static class Builder {
         private final Map<String, Map<String, DataFetcher>> dataFetchers = new LinkedHashMap<>();
         private final Map<String, DataFetcher> defaultDataFetchers = new LinkedHashMap<>();
@@ -167,14 +185,37 @@ public class RuntimeWiring {
         private final Map<String, EnumValuesProvider> enumValuesProviders = new LinkedHashMap<>();
         private final Map<String, SchemaDirectiveWiring> registeredDirectiveWiring = new LinkedHashMap<>();
         private final List<SchemaDirectiveWiring> directiveWiring = new ArrayList<>();
-        private final Collection<SchemaGeneratorPostProcessing> schemaGeneratorPostProcessings = new ArrayList<>();
         private WiringFactory wiringFactory = new NoopWiringFactory();
+        private boolean strictMode = true;
         private GraphqlFieldVisibility fieldVisibility = DEFAULT_FIELD_VISIBILITY;
         private GraphQLCodeRegistry codeRegistry = GraphQLCodeRegistry.newCodeRegistry().build();
         private GraphqlTypeComparatorRegistry comparatorRegistry = GraphqlTypeComparatorRegistry.AS_IS_REGISTRY;
 
         private Builder() {
             ScalarInfo.GRAPHQL_SPECIFICATION_SCALARS.forEach(this::scalar);
+        }
+
+        /**
+         * This sets strict mode as true or false. If strictMode is true, if things get defined twice, for example, it will throw a {@link StrictModeWiringException}.
+         *
+         * @return this builder
+         */
+        public Builder strictMode(boolean strictMode) {
+            this.strictMode = strictMode;
+            return this;
+        }
+
+        /**
+         * This puts the builder into strict mode, so if things get defined twice, for example, it will throw a {@link StrictModeWiringException}.
+         *
+         * @return this builder
+         *
+         * @deprecated strictMode default value changed to true, use {@link #strictMode(boolean)} instead
+         */
+        @Deprecated(since = "2025-03-22", forRemoval = true)
+        public Builder strictMode() {
+            this.strictMode = true;
+            return this;
         }
 
         /**
@@ -185,7 +226,7 @@ public class RuntimeWiring {
          * @return this outer builder
          */
         public Builder wiringFactory(WiringFactory wiringFactory) {
-            assertNotNull(wiringFactory, () -> "You must provide a wiring factory");
+            assertNotNull(wiringFactory, "You must provide a wiring factory");
             this.wiringFactory = wiringFactory;
             return this;
         }
@@ -222,6 +263,9 @@ public class RuntimeWiring {
          * @return the runtime wiring builder
          */
         public Builder scalar(GraphQLScalarType scalarType) {
+            if (strictMode && scalars.containsKey(scalarType.getName())) {
+                throw new StrictModeWiringException(format("The scalar %s is already defined", scalarType.getName()));
+            }
             scalars.put(scalarType.getName(), scalarType);
             return this;
         }
@@ -272,17 +316,39 @@ public class RuntimeWiring {
         public Builder type(TypeRuntimeWiring typeRuntimeWiring) {
             String typeName = typeRuntimeWiring.getTypeName();
             Map<String, DataFetcher> typeDataFetchers = dataFetchers.computeIfAbsent(typeName, k -> new LinkedHashMap<>());
-            typeRuntimeWiring.getFieldDataFetchers().forEach(typeDataFetchers::put);
 
-            defaultDataFetchers.put(typeName, typeRuntimeWiring.getDefaultDataFetcher());
+            Map<String, DataFetcher> additionalFieldDataFetchers = typeRuntimeWiring.getFieldDataFetchers();
+            if (strictMode && !typeDataFetchers.isEmpty()) {
+                // Check if the existing type wiring contains overlapping DataFetcher definitions
+                for (String fieldName : additionalFieldDataFetchers.keySet()) {
+                    if (typeDataFetchers.containsKey(fieldName)) {
+                        throw new StrictModeWiringException(format("The field %s on type %s has already been defined", fieldName, typeName));
+                    }
+                }
+            }
+            typeDataFetchers.putAll(additionalFieldDataFetchers);
+
+            DataFetcher<?> defaultDataFetcher = typeRuntimeWiring.getDefaultDataFetcher();
+            if (defaultDataFetcher != null) {
+                if (strictMode && defaultDataFetchers.containsKey(typeName)) {
+                    throw new StrictModeWiringException(format("The type %s already has a default data fetcher defined", typeName));
+                }
+                defaultDataFetchers.put(typeName, defaultDataFetcher);
+            }
 
             TypeResolver typeResolver = typeRuntimeWiring.getTypeResolver();
             if (typeResolver != null) {
+                if (strictMode && this.typeResolvers.containsKey(typeName)) {
+                    throw new StrictModeWiringException(format("The type %s already has a type resolver defined", typeName));
+                }
                 this.typeResolvers.put(typeName, typeResolver);
             }
 
             EnumValuesProvider enumValuesProvider = typeRuntimeWiring.getEnumValuesProvider();
             if (enumValuesProvider != null) {
+                if (strictMode && this.enumValuesProviders.containsKey(typeName)) {
+                    throw new StrictModeWiringException(format("The type %s already has a enum provider defined", typeName));
+                }
                 this.enumValuesProviders.put(typeName, enumValuesProvider);
             }
             return this;
@@ -346,20 +412,6 @@ public class RuntimeWiring {
             return this;
         }
 
-        /**
-         * Adds a schema transformer into the mix
-         *
-         * @param schemaGeneratorPostProcessing the non null schema transformer to add
-         *
-         * @return the runtime wiring builder
-         * @deprecated This mechanism can be achieved in a better way via {@link graphql.schema.SchemaTransformer}
-         * after the schema is built
-         */
-        @Deprecated(since = "2022-10-29")
-        public Builder transformer(SchemaGeneratorPostProcessing schemaGeneratorPostProcessing) {
-            this.schemaGeneratorPostProcessings.add(assertNotNull(schemaGeneratorPostProcessing));
-            return this;
-        }
 
         /**
          * @return the built runtime wiring

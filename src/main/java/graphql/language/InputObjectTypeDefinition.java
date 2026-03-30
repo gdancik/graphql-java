@@ -1,14 +1,13 @@
 package graphql.language;
 
-
 import com.google.common.collect.ImmutableList;
 import graphql.Internal;
 import graphql.PublicApi;
 import graphql.collect.ImmutableKit;
+import graphql.util.FpKit;
 import graphql.util.TraversalControl;
 import graphql.util.TraverserContext;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,7 +22,7 @@ import static graphql.language.NodeChildrenContainer.newNodeChildrenContainer;
 public class InputObjectTypeDefinition extends AbstractDescribedNode<InputObjectTypeDefinition> implements TypeDefinition<InputObjectTypeDefinition>, DirectivesContainer<InputObjectTypeDefinition>, NamedNode<InputObjectTypeDefinition> {
 
     private final String name;
-    private final ImmutableList<Directive> directives;
+    private final NodeUtil.DirectivesHolder directives;
     private final ImmutableList<InputValueDefinition> inputValueDefinitions;
 
     public static final String CHILD_DIRECTIVES = "directives";
@@ -40,13 +39,28 @@ public class InputObjectTypeDefinition extends AbstractDescribedNode<InputObject
                                         Map<String, String> additionalData) {
         super(sourceLocation, comments, ignoredChars, additionalData, description);
         this.name = name;
-        this.directives = ImmutableList.copyOf(directives);
+        this.directives = NodeUtil.DirectivesHolder.of(directives);
         this.inputValueDefinitions = ImmutableList.copyOf(inputValueDefinitions);
     }
 
     @Override
     public List<Directive> getDirectives() {
-        return directives;
+        return directives.getDirectives();
+    }
+
+    @Override
+    public Map<String, List<Directive>> getDirectivesByName() {
+        return directives.getDirectivesByName();
+    }
+
+    @Override
+    public List<Directive> getDirectives(String directiveName) {
+        return directives.getDirectives(directiveName);
+    }
+
+    @Override
+    public boolean hasDirective(String directiveName) {
+        return directives.hasDirective(directiveName);
     }
 
     public List<InputValueDefinition> getInputValueDefinitions() {
@@ -60,16 +74,13 @@ public class InputObjectTypeDefinition extends AbstractDescribedNode<InputObject
 
     @Override
     public List<Node> getChildren() {
-        List<Node> result = new ArrayList<>();
-        result.addAll(directives);
-        result.addAll(inputValueDefinitions);
-        return result;
+        return FpKit.concat(directives.getDirectives(), inputValueDefinitions);
     }
 
     @Override
     public NodeChildrenContainer getNamedChildren() {
         return newNodeChildrenContainer()
-                .children(CHILD_DIRECTIVES, directives)
+                .children(CHILD_DIRECTIVES, directives.getDirectives())
                 .children(CHILD_INPUT_VALUES_DEFINITIONS, inputValueDefinitions)
                 .build();
     }
@@ -99,7 +110,7 @@ public class InputObjectTypeDefinition extends AbstractDescribedNode<InputObject
     @Override
     public InputObjectTypeDefinition deepCopy() {
         return new InputObjectTypeDefinition(name,
-                deepCopy(directives),
+                deepCopy(directives.getDirectives()),
                 deepCopy(inputValueDefinitions),
                 description,
                 getSourceLocation(),

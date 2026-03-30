@@ -34,7 +34,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import static graphql.introspection.Introspection.DirectiveLocation.ARGUMENT_DEFINITION;
 import static graphql.introspection.Introspection.DirectiveLocation.ENUM;
@@ -137,7 +136,7 @@ class SchemaTypeDirectivesChecker {
     private void checkDirectives(DirectiveLocation expectedLocation, List<GraphQLError> errors, TypeDefinitionRegistry typeRegistry, Node<?> element, String elementName, List<Directive> directives) {
         directives.forEach(directive -> {
             Optional<DirectiveDefinition> directiveDefinition = typeRegistry.getDirectiveDefinition(directive.getName());
-            if (!directiveDefinition.isPresent()) {
+            if (directiveDefinition.isEmpty()) {
                 errors.add(new DirectiveUndeclaredError(element, elementName, directive.getName()));
             } else {
                 if (!inRightLocation(expectedLocation, directiveDefinition.get())) {
@@ -148,16 +147,16 @@ class SchemaTypeDirectivesChecker {
         });
     }
 
-    private boolean inRightLocation(DirectiveLocation expectedLocation, DirectiveDefinition directiveDefinition) {
-        List<String> names = directiveDefinition.getDirectiveLocations()
-                .stream().map(graphql.language.DirectiveLocation::getName)
-                .map(String::toUpperCase)
-                .collect(Collectors.toList());
-
-        return names.contains(expectedLocation.name().toUpperCase());
+    private static boolean inRightLocation(DirectiveLocation expectedLocation, DirectiveDefinition directiveDefinition) {
+        for (graphql.language.DirectiveLocation location : directiveDefinition.getDirectiveLocations()) {
+            if (location.getName().equalsIgnoreCase(expectedLocation.name())) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private void checkDirectiveArguments(List<GraphQLError> errors, TypeDefinitionRegistry typeRegistry, Node element, String elementName, Directive directive, DirectiveDefinition directiveDefinition) {
+    private void checkDirectiveArguments(List<GraphQLError> errors, TypeDefinitionRegistry typeRegistry, Node<?> element, String elementName, Directive directive, DirectiveDefinition directiveDefinition) {
         Map<String, InputValueDefinition> allowedArgs = getByName(directiveDefinition.getInputValueDefinitions(), (InputValueDefinition::getName), mergeFirst());
         Map<String, Argument> providedArgs = getByName(directive.getArguments(), (Argument::getName), mergeFirst());
         directive.getArguments().forEach(argument -> {
@@ -178,7 +177,7 @@ class SchemaTypeDirectivesChecker {
         });
     }
 
-    private boolean isNoNullArgWithoutDefaultValue(InputValueDefinition definitionArgument) {
+    private static boolean isNoNullArgWithoutDefaultValue(InputValueDefinition definitionArgument) {
         return definitionArgument.getType() instanceof NonNullType && definitionArgument.getDefaultValue() == null;
     }
 
@@ -195,7 +194,7 @@ class SchemaTypeDirectivesChecker {
         });
     }
 
-    private void assertTypeName(NamedNode node, List<GraphQLError> errors) {
+    private static void assertTypeName(NamedNode<?> node, List<GraphQLError> errors) {
         if (node.getName().length() >= 2 && node.getName().startsWith("__")) {
             errors.add((new IllegalNameError(node)));
         }
@@ -204,7 +203,7 @@ class SchemaTypeDirectivesChecker {
     public void assertExistAndIsInputType(InputValueDefinition definition, List<GraphQLError> errors) {
         TypeName namedType = TypeUtil.unwrapAll(definition.getType());
 
-        TypeDefinition unwrappedType = findTypeDefFromRegistry(namedType.getName(), typeRegistry);
+        TypeDefinition<?> unwrappedType = findTypeDefFromRegistry(namedType.getName(), typeRegistry);
 
         if (unwrappedType == null) {
             errors.add(new MissingTypeError(namedType.getName(), definition, definition.getName()));
@@ -218,7 +217,11 @@ class SchemaTypeDirectivesChecker {
         }
     }
 
-    private TypeDefinition findTypeDefFromRegistry(String typeName, TypeDefinitionRegistry typeRegistry) {
-        return typeRegistry.getType(typeName).orElseGet(() -> typeRegistry.scalars().get(typeName));
+    private static TypeDefinition<?> findTypeDefFromRegistry(String typeName, TypeDefinitionRegistry typeRegistry) {
+        TypeDefinition<?> typeDefinition = typeRegistry.getTypeOrNull(typeName);
+        if (typeDefinition != null) {
+            return typeDefinition;
+        }
+        return typeRegistry.scalars().get(typeName);
     }
 }

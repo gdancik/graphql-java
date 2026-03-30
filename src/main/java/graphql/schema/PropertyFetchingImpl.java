@@ -3,10 +3,7 @@ package graphql.schema;
 import graphql.GraphQLException;
 import graphql.Internal;
 import graphql.schema.fetching.LambdaFetchingSupport;
-import graphql.util.EscapeUtil;
 import graphql.util.StringKit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -14,7 +11,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -66,7 +62,7 @@ public class PropertyFetchingImpl {
         }
     }
 
-    public Object getPropertyValue(String propertyName, Object object, GraphQLType graphQLType, boolean dfeInUse, Supplier<Object> singleArgumentValue) {
+    public Object getPropertyValue(String propertyName, Object object, GraphQLType graphQLType, boolean dfeInUse, Supplier<?> singleArgumentValue) {
         if (object instanceof Map) {
             return ((Map<?, ?>) object).get(propertyName);
         }
@@ -194,12 +190,12 @@ public class PropertyFetchingImpl {
         Method apply(Class<?> aClass, String s) throws NoSuchMethodException;
     }
 
-    private Object getPropertyViaRecordMethod(Object object, String propertyName, MethodFinder methodFinder, Supplier<Object> singleArgumentValue) throws NoSuchMethodException {
+    private Object getPropertyViaRecordMethod(Object object, String propertyName, MethodFinder methodFinder, Supplier<?> singleArgumentValue) throws NoSuchMethodException {
         Method method = methodFinder.apply(object.getClass(), propertyName);
         return invokeMethod(object, singleArgumentValue, method, takesSingleArgumentTypeAsOnlyArgument(method));
     }
 
-    private Object getPropertyViaGetterMethod(Object object, String propertyName, GraphQLType graphQLType, MethodFinder methodFinder, Supplier<Object> singleArgumentValue) throws NoSuchMethodException {
+    private Object getPropertyViaGetterMethod(Object object, String propertyName, GraphQLType graphQLType, MethodFinder methodFinder, Supplier<?> singleArgumentValue) throws NoSuchMethodException {
         if (isBooleanProperty(graphQLType)) {
             try {
                 return getPropertyViaGetterUsingPrefix(object, propertyName, "is", methodFinder, singleArgumentValue);
@@ -211,7 +207,7 @@ public class PropertyFetchingImpl {
         }
     }
 
-    private Object getPropertyViaGetterUsingPrefix(Object object, String propertyName, String prefix, MethodFinder methodFinder, Supplier<Object> singleArgumentValue) throws NoSuchMethodException {
+    private Object getPropertyViaGetterUsingPrefix(Object object, String propertyName, String prefix, MethodFinder methodFinder, Supplier<?> singleArgumentValue) throws NoSuchMethodException {
         String getterName = prefix + StringKit.capitalize(propertyName);
         Method method = methodFinder.apply(object.getClass(), getterName);
         return invokeMethod(object, singleArgumentValue, method, takesSingleArgumentTypeAsOnlyArgument(method));
@@ -248,10 +244,49 @@ public class PropertyFetchingImpl {
                     return method;
                 }
             }
+            // Check public interfaces implemented by this class (handles non-public classes
+            // like TreeMap.Entry that implement public interfaces like Map.Entry)
+            Method method = findMethodOnPublicInterfaces(cacheKey, currentClass.getInterfaces(), methodName, dfeInUse, allowStaticMethods);
+            if (method != null) {
+                return method;
+            }
             currentClass = currentClass.getSuperclass();
         }
         assert rootClass != null;
         return rootClass.getMethod(methodName);
+    }
+
+    private Method findMethodOnPublicInterfaces(CacheKey cacheKey, Class<?>[] interfaces, String methodName, boolean dfeInUse, boolean allowStaticMethods) {
+        for (Class<?> iface : interfaces) {
+            if (Modifier.isPublic(iface.getModifiers())) {
+                if (dfeInUse) {
+                    try {
+                        Method method = iface.getMethod(methodName, singleArgumentType);
+                        if (isSuitablePublicMethod(method, allowStaticMethods)) {
+                            METHOD_CACHE.putIfAbsent(cacheKey, new CachedMethod(method));
+                            return method;
+                        }
+                    } catch (NoSuchMethodException e) {
+                        // ok try the next approach
+                    }
+                }
+                try {
+                    Method method = iface.getMethod(methodName);
+                    if (isSuitablePublicMethod(method, allowStaticMethods)) {
+                        METHOD_CACHE.putIfAbsent(cacheKey, new CachedMethod(method));
+                        return method;
+                    }
+                } catch (NoSuchMethodException e) {
+                    // continue searching
+                }
+            }
+            // Also search super-interfaces of non-public interfaces
+            Method method = findMethodOnPublicInterfaces(cacheKey, iface.getInterfaces(), methodName, dfeInUse, allowStaticMethods);
+            if (method != null) {
+                return method;
+            }
+        }
+        return null;
     }
 
     private boolean isSuitablePublicMethod(Method method, boolean allowStaticMethods) {
@@ -340,7 +375,7 @@ public class PropertyFetchingImpl {
         }
     }
 
-    private Object invokeMethod(Object object, Supplier<Object> singleArgumentValue, Method method, boolean takesSingleArgument) throws FastNoSuchMethodException {
+    private Object invokeMethod(Object object, Supplier<?> singleArgumentValue, Method method, boolean takesSingleArgument) throws FastNoSuchMethodException {
         try {
             if (takesSingleArgument) {
                 Object argValue = singleArgumentValue.get();

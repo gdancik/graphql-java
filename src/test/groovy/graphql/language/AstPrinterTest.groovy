@@ -3,6 +3,8 @@ package graphql.language
 import graphql.parser.Parser
 import spock.lang.Specification
 
+import java.nio.CharBuffer
+
 class AstPrinterTest extends Specification {
 
     Document parse(String input) {
@@ -696,7 +698,7 @@ extend input Input @directive {
         def result = AstPrinter.printAstCompact(interfaceType)
 
         then:
-        result == "interface Resource implements Node & Extra {}"
+        result == "interface Resource implements Node & Extra"
 
     }
 
@@ -713,7 +715,7 @@ extend input Input @directive {
         def result = AstPrinter.printAstCompact(interfaceType)
 
         then:
-        result == "extend interface Resource implements Node & Extra {}"
+        result == "extend interface Resource implements Node & Extra"
 
     }
 
@@ -746,5 +748,64 @@ extend input Input @directive {
         then:
         result == "directive @d2 on FIELD | ENUM"
 
+    }
+
+    def "empty type does not include braces"() {
+        def sdl = "type Query"
+        def document = parse(sdl)
+
+        when:
+        String output = printAst(document)
+        then:
+        output == "type Query\n"
+    }
+
+    def "empty selection set does not include braces"() {
+        // technically below is not valid graphql and will never be parsed as is
+        def field_with_empty_selection_set = Field.newField("foo")
+                .selectionSet(SelectionSet.newSelectionSet().build())
+                .build()
+
+        when:
+        String output = printAst(field_with_empty_selection_set)
+        then:
+        output == "foo"
+    }
+
+    def "printAstTo writes to a StringBuilder instance"() {
+        def document = parse(starWarsSchema)
+        def output = new StringBuilder()
+        AstPrinter.printAstTo(document.getDefinitions().get(0), output)
+
+        expect:
+        output.toString() == """schema {
+  query: QueryType
+  mutation: Mutation
+}"""
+    }
+
+    def "printAstTo writes to a Writer instance"() {
+        def document = parse(starWarsSchema)
+        def output = new StringWriter()
+        AstPrinter.printAstTo(document.getDefinitions().get(0), output)
+
+        expect:
+        output.toString() == """schema {
+  query: QueryType
+  mutation: Mutation
+}"""
+    }
+
+    def "printAstTo writes to an Appendable instance"() {
+        def document = parse(starWarsSchema)
+        def output = CharBuffer.allocate(100)
+        AstPrinter.printAstTo(document.getDefinitions().get(0), output)
+        output.flip()
+
+        expect:
+        output.toString() == """schema {
+  query: QueryType
+  mutation: Mutation
+}"""
     }
 }

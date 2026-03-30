@@ -1,5 +1,6 @@
 package graphql.execution;
 
+import graphql.Internal;
 import graphql.PublicApi;
 import graphql.collect.ImmutableMapWithNullValues;
 import graphql.schema.GraphQLFieldDefinition;
@@ -72,20 +73,28 @@ public class ExecutionStepInfo {
         this.field = builder.field;
         this.path = builder.path;
         this.parent = builder.parentInfo;
-        this.type = assertNotNull(builder.type, () -> "you must provide a graphql type");
+        this.type = assertNotNull(builder.type, "you must provide a graphql type");
         this.arguments = builder.arguments;
         this.fieldContainer = builder.fieldContainer;
     }
 
-    /**
-     * @return the GraphQLObjectType defining the {@link #getFieldDefinition()}
-     *
-     * @see ExecutionStepInfo#getObjectType()
-     * @deprecated use {@link #getObjectType()} instead as it is named better
+    /*
+     * This constructor allows for a slightly ( 1% ish) faster transformation without an intermediate Builder object
      */
-    @Deprecated(since = "2022-02-03")
-    public GraphQLObjectType getFieldContainer() {
-        return fieldContainer;
+    private ExecutionStepInfo(GraphQLOutputType type,
+                              ResultPath path,
+                              ExecutionStepInfo parent,
+                              MergedField field,
+                              GraphQLFieldDefinition fieldDefinition,
+                              GraphQLObjectType fieldContainer,
+                              Supplier<ImmutableMapWithNullValues<String, Object>> arguments) {
+        this.type = assertNotNull(type, "you must provide a graphql type");
+        this.path = path;
+        this.parent = parent;
+        this.field = field;
+        this.fieldDefinition = fieldDefinition;
+        this.fieldContainer = fieldContainer;
+        this.arguments = arguments;
     }
 
     /**
@@ -115,6 +124,18 @@ public class ExecutionStepInfo {
      */
     public GraphQLOutputType getUnwrappedNonNullType() {
         return (GraphQLOutputType) GraphQLTypeUtil.unwrapNonNull(this.type);
+    }
+
+    /**
+     * This returns the type which is unwrapped if it was {@link GraphQLNonNull} wrapped
+     * and then cast to the target type.
+     *
+     * @param <T> for two
+     *
+     * @return the graphql type in question
+     */
+    public <T extends GraphQLOutputType> T getUnwrappedNonNullTypeAs() {
+        return GraphQLTypeUtil.unwrapNonNullAs(this.type);
     }
 
     /**
@@ -202,14 +223,13 @@ public class ExecutionStepInfo {
      * @return a new type info with the same
      */
     public ExecutionStepInfo changeTypeWithPreservedNonNull(GraphQLOutputType newType) {
-        assertTrue(!GraphQLTypeUtil.isNonNull(newType), () -> "newType can't be non null");
+        assertTrue(!GraphQLTypeUtil.isNonNull(newType), "newType can't be non null");
         if (isNonNullType()) {
-            return newExecutionStepInfo(this).type(GraphQLNonNull.nonNull(newType)).build();
+            return transform(GraphQLNonNull.nonNull(newType));
         } else {
-            return newExecutionStepInfo(this).type(newType).build();
+            return transform(newType);
         }
     }
-
 
     /**
      * @return the type in graphql SDL format, eg [typeName!]!
@@ -225,6 +245,16 @@ public class ExecutionStepInfo {
                 ", type=" + type +
                 ", fieldDefinition=" + fieldDefinition +
                 '}';
+    }
+
+    @Internal
+    ExecutionStepInfo transform(GraphQLOutputType type) {
+        return new ExecutionStepInfo(type, path, parent, field, fieldDefinition, fieldContainer, arguments);
+    }
+
+    @Internal
+    ExecutionStepInfo transform(GraphQLOutputType type, ExecutionStepInfo parent, ResultPath path) {
+        return new ExecutionStepInfo(type, path, parent, field, fieldDefinition, fieldContainer, arguments);
     }
 
     public ExecutionStepInfo transform(Consumer<Builder> builderConsumer) {
@@ -299,11 +329,8 @@ public class ExecutionStepInfo {
             return this;
         }
 
-        public Builder arguments(Supplier<Map<String, Object>> arguments) {
-            this.arguments = () -> {
-                Map<String, Object> map = arguments.get();
-                return map == null ? ImmutableMapWithNullValues.emptyMap() : ImmutableMapWithNullValues.copyOf(map);
-            };
+        public Builder arguments(Supplier<ImmutableMapWithNullValues<String, Object>> arguments) {
+            this.arguments = arguments;
             return this;
         }
 

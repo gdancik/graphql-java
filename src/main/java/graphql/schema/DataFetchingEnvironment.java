@@ -1,6 +1,7 @@
 package graphql.schema;
 
 import graphql.GraphQLContext;
+import graphql.Internal;
 import graphql.PublicApi;
 import graphql.execution.ExecutionId;
 import graphql.execution.ExecutionStepInfo;
@@ -13,6 +14,8 @@ import graphql.language.FragmentDefinition;
 import graphql.language.OperationDefinition;
 import org.dataloader.DataLoader;
 import org.dataloader.DataLoaderRegistry;
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +28,7 @@ import java.util.Map;
  */
 @SuppressWarnings("TypeParameterUnusedInFormals")
 @PublicApi
+@NullMarked
 public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnvironment {
 
     /**
@@ -37,6 +41,7 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      *
      * @return can be null for the root query, otherwise it is never null
      */
+    @Nullable
     <T> T getSource();
 
     /**
@@ -61,6 +66,7 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      *
      * @return the named argument or null if it's not present
      */
+    @Nullable
     <T> T getArgument(String name);
 
     /**
@@ -87,6 +93,7 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      * @deprecated - use {@link #getGraphQlContext()} instead
      */
     @Deprecated(since = "2021-07-05")
+    @Nullable
     <T> T getContext();
 
     /**
@@ -114,6 +121,7 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      *
      * @return can be null if no field context objects are passed back by previous parent fields
      */
+    @Nullable
     <T> T getLocalContext();
 
     /**
@@ -123,6 +131,7 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      *
      * @return can be null
      */
+    @Nullable
     <T> T getRoot();
 
     /**
@@ -228,7 +237,9 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      *
      * @see org.dataloader.DataLoaderRegistry#getDataLoader(String)
      */
-    <K, V> DataLoader<K, V> getDataLoader(String dataLoaderName);
+    @Nullable
+    <K, V extends @Nullable Object> DataLoader<K, V> getDataLoader(String dataLoaderName);
+
 
     /**
      * @return the {@link org.dataloader.DataLoaderRegistry} in play
@@ -263,4 +274,17 @@ public interface DataFetchingEnvironment extends IntrospectionDataFetchingEnviro
      * @return the coerced variables that have been passed to the query that is being executed
      */
     Map<String, Object> getVariables();
+
+
+    /**
+     * A method that should only be used by the GraphQL Java library itself.
+     * It is not intended for public use.
+     *
+     * @return an internal representation of the DataFetchingEnvironment
+     */
+    @Internal
+    default Object toInternal() {
+        throw new UnsupportedOperationException();
+    }
+
 }

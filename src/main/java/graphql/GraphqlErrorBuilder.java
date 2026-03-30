@@ -4,11 +4,13 @@ import graphql.execution.DataFetcherResult;
 import graphql.execution.ResultPath;
 import graphql.language.SourceLocation;
 import graphql.schema.DataFetchingEnvironment;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NullUnmarked;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static graphql.Assert.assertNotNull;
 
@@ -20,6 +22,7 @@ import static graphql.Assert.assertNotNull;
  */
 @SuppressWarnings("unchecked")
 @PublicApi
+@NullUnmarked
 public class GraphqlErrorBuilder<B extends GraphqlErrorBuilder<B>> implements GraphQLError.Builder<B> {
 
     private String message;
@@ -128,10 +131,22 @@ public class GraphqlErrorBuilder<B extends GraphqlErrorBuilder<B>> implements Gr
      * @return a newly built GraphqlError
      */
     public GraphQLError build() {
-        assertNotNull(message, () -> "You must provide error message");
+        assertNotNull(message, "You must provide error message");
         return new GraphqlErrorImpl(message, locations, errorType, path, extensions);
     }
 
+    /**
+     * A simple implementation of a {@link GraphQLError}.
+     * <p>
+     * This provides {@link #hashCode()} and {@link #equals(Object)} methods that afford comparison with other
+     * {@link GraphQLError} implementations. However, the values provided in the following fields <b>must</b>
+     * in turn implement {@link #hashCode()} and {@link #equals(Object)} for this to function correctly:
+     * <ul>
+     *   <li>the values in the {@link #getPath()} {@link List}.
+     *   <li>the {@link #getErrorType()} {@link ErrorClassification}.
+     *   <li>the values in the {@link #getExtensions()} {@link Map}.
+     * </ul>
+     */
     private static class GraphqlErrorImpl implements GraphQLError {
         private final String message;
         private final List<SourceLocation> locations;
@@ -175,6 +190,28 @@ public class GraphqlErrorBuilder<B extends GraphqlErrorBuilder<B>> implements Gr
         @Override
         public String toString() {
             return message;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof GraphQLError)) return false;
+            GraphQLError that = (GraphQLError) o;
+            return Objects.equals(getMessage(), that.getMessage())
+                    && Objects.equals(getLocations(), that.getLocations())
+                    && Objects.equals(getErrorType(), that.getErrorType())
+                    && Objects.equals(getPath(), that.getPath())
+                    && Objects.equals(getExtensions(), that.getExtensions());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(
+                    getMessage(),
+                    getLocations(),
+                    getErrorType(),
+                    getPath(),
+                    getExtensions());
         }
     }
 

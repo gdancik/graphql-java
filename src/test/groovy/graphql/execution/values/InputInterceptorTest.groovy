@@ -10,8 +10,6 @@ import graphql.execution.ValuesResolver
 import graphql.schema.DataFetcher
 import graphql.schema.DataFetchingEnvironment
 import graphql.schema.GraphQLInputType
-import org.jetbrains.annotations.NotNull
-import org.jetbrains.annotations.Nullable
 import spock.lang.Specification
 
 import static graphql.language.TypeName.newTypeName
@@ -35,7 +33,7 @@ class InputInterceptorTest extends Specification {
 
     InputInterceptor interceptor = new InputInterceptor() {
         @Override
-        Object intercept(@Nullable Object value, @NotNull GraphQLInputType graphQLType, @NotNull GraphQLContext graphqlContext, @NotNull Locale locale) {
+        Object intercept(Object value, GraphQLInputType graphQLType, GraphQLContext graphqlContext, Locale locale) {
             if (graphQLType == Scalars.GraphQLBoolean) {
                 return "truthy" == value ? false : value
             }
@@ -98,7 +96,7 @@ class InputInterceptorTest extends Specification {
             ''')
                 .graphQLContext({ it.put(InputInterceptor.class, interceptor) })
                 .variables(
-                        "booleanArg": "truthy",
+                        "booleanArg": false,
                         "stringArg": "sdrawkcab"
 
                 )
@@ -134,6 +132,6 @@ class InputInterceptorTest extends Specification {
 
         then:
         !er.errors.isEmpty()
-        er.errors[0].message == "Variable 'booleanArg' has an invalid value: Expected a value that can be converted to type 'Boolean' but it was a 'LinkedHashMap'"
+        er.errors[0].message == "Variable 'booleanArg' has an invalid value: Expected a Boolean input, but it was a 'LinkedHashMap'"
     }
 }

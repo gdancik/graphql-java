@@ -13,6 +13,7 @@ import graphql.util.TreeTransformer;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.jspecify.annotations.NullUnmarked;
 
 import static graphql.Assert.assertNotNull;
 import static graphql.language.AstNodeAdapter.AST_NODE_ADAPTER;
@@ -36,20 +37,22 @@ public class QueryTransformer {
     private final GraphQLSchema schema;
     private final Map<String, FragmentDefinition> fragmentsByName;
     private final Map<String, Object> variables;
-
     private final GraphQLCompositeType rootParentType;
+    private final QueryTraversalOptions options;
 
 
     private QueryTransformer(GraphQLSchema schema,
                              Node root,
                              GraphQLCompositeType rootParentType,
                              Map<String, FragmentDefinition> fragmentsByName,
-                             Map<String, Object> variables) {
-        this.schema = assertNotNull(schema, () -> "schema can't be null");
-        this.variables = assertNotNull(variables, () -> "variables can't be null");
-        this.root = assertNotNull(root, () -> "root can't be null");
+                             Map<String, Object> variables,
+                             QueryTraversalOptions options) {
+        this.schema = assertNotNull(schema, "schema can't be null");
+        this.variables = assertNotNull(variables, "variables can't be null");
+        this.root = assertNotNull(root, "root can't be null");
         this.rootParentType = assertNotNull(rootParentType);
-        this.fragmentsByName = assertNotNull(fragmentsByName, () -> "fragmentsByName can't be null");
+        this.fragmentsByName = assertNotNull(fragmentsByName, "fragmentsByName can't be null");
+        this.options = assertNotNull(options, "options can't be null");
     }
 
     /**
@@ -65,12 +68,17 @@ public class QueryTransformer {
      */
     public Node transform(QueryVisitor queryVisitor) {
         QueryVisitor noOp = new QueryVisitorStub();
-        NodeVisitorWithTypeTracking nodeVisitor = new NodeVisitorWithTypeTracking(queryVisitor, noOp, variables, schema, fragmentsByName);
+        NodeVisitorWithTypeTracking nodeVisitor = new NodeVisitorWithTypeTracking(queryVisitor,
+                noOp,
+                variables,
+                schema,
+                fragmentsByName,
+                options);
 
         Map<Class<?>, Object> rootVars = new LinkedHashMap<>();
         rootVars.put(QueryTraversalContext.class, new QueryTraversalContext(rootParentType, null, null, GraphQLContext.getDefault()));
 
-        TraverserVisitor<Node> nodeTraverserVisitor = new TraverserVisitor<Node>() {
+        TraverserVisitor<Node> nodeTraverserVisitor = new TraverserVisitor<>() {
 
             @Override
             public TraversalControl enter(TraverserContext<Node> context) {
@@ -91,6 +99,7 @@ public class QueryTransformer {
     }
 
     @PublicApi
+    @NullUnmarked
     public static class Builder {
         private GraphQLSchema schema;
         private Map<String, Object> variables;
@@ -98,6 +107,7 @@ public class QueryTransformer {
         private Node root;
         private GraphQLCompositeType rootParentType;
         private Map<String, FragmentDefinition> fragmentsByName;
+        private QueryTraversalOptions options = QueryTraversalOptions.defaultOptions();
 
 
         /**
@@ -160,8 +170,25 @@ public class QueryTransformer {
             return this;
         }
 
+        /**
+         * Sets the options to use while traversing
+         *
+         * @param options the options to use
+         * @return this builder
+         */
+        public Builder options(QueryTraversalOptions options) {
+            this.options = assertNotNull(options, "options can't be null");
+            return this;
+        }
+
         public QueryTransformer build() {
-            return new QueryTransformer(schema, root, rootParentType, fragmentsByName, variables);
+            return new QueryTransformer(
+                    schema,
+                    root,
+                    rootParentType,
+                    fragmentsByName,
+                    variables,
+                    options);
         }
     }
 }

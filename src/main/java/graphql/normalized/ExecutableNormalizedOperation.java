@@ -1,10 +1,12 @@
 package graphql.normalized;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import graphql.Assert;
 import graphql.PublicApi;
 import graphql.execution.MergedField;
 import graphql.execution.ResultPath;
+import graphql.execution.directives.QueryAppliedDirective;
 import graphql.execution.directives.QueryDirectives;
 import graphql.language.Field;
 import graphql.language.OperationDefinition;
@@ -25,29 +27,37 @@ import java.util.Map;
 @PublicApi
 public class ExecutableNormalizedOperation {
     private final OperationDefinition.Operation operation;
+    private final Map<String, ImmutableList<QueryAppliedDirective>> operationDirectives;
     private final String operationName;
     private final List<ExecutableNormalizedField> topLevelFields;
     private final ImmutableListMultimap<Field, ExecutableNormalizedField> fieldToNormalizedField;
     private final Map<ExecutableNormalizedField, MergedField> normalizedFieldToMergedField;
     private final Map<ExecutableNormalizedField, QueryDirectives> normalizedFieldToQueryDirectives;
     private final ImmutableListMultimap<FieldCoordinates, ExecutableNormalizedField> coordinatesToNormalizedFields;
+    private final int operationFieldCount;
+    private final int operationDepth;
 
     public ExecutableNormalizedOperation(
             OperationDefinition.Operation operation,
             String operationName,
+            Map<String, ImmutableList<QueryAppliedDirective>> operationDirectives,
             List<ExecutableNormalizedField> topLevelFields,
             ImmutableListMultimap<Field, ExecutableNormalizedField> fieldToNormalizedField,
             Map<ExecutableNormalizedField, MergedField> normalizedFieldToMergedField,
             Map<ExecutableNormalizedField, QueryDirectives> normalizedFieldToQueryDirectives,
-            ImmutableListMultimap<FieldCoordinates, ExecutableNormalizedField> coordinatesToNormalizedFields
-    ) {
+            ImmutableListMultimap<FieldCoordinates, ExecutableNormalizedField> coordinatesToNormalizedFields,
+            int operationFieldCount,
+            int operationDepth) {
         this.operation = operation;
         this.operationName = operationName;
+        this.operationDirectives = operationDirectives;
         this.topLevelFields = topLevelFields;
         this.fieldToNormalizedField = fieldToNormalizedField;
         this.normalizedFieldToMergedField = normalizedFieldToMergedField;
         this.normalizedFieldToQueryDirectives = normalizedFieldToQueryDirectives;
         this.coordinatesToNormalizedFields = coordinatesToNormalizedFields;
+        this.operationFieldCount = operationFieldCount;
+        this.operationDepth = operationDepth;
     }
 
     /**
@@ -62,6 +72,34 @@ public class ExecutableNormalizedOperation {
      */
     public String getOperationName() {
         return operationName;
+    }
+
+    /**
+     * This is the directives that are on the operation itself and not the fields under it for example
+     * <pre>
+     * {@code
+     *   query opName @foo { field }
+     * }
+     * </pre>
+     *
+     * @return the directives that are on this operation itself.
+     */
+    public Map<String, ImmutableList<QueryAppliedDirective>> getOperationDirectives() {
+        return operationDirectives;
+    }
+
+    /**
+     * @return This returns how many {@link ExecutableNormalizedField}s are in the operation.
+     */
+    public int getOperationFieldCount() {
+        return operationFieldCount;
+    }
+
+    /**
+     * @return This returns the depth of the operation
+     */
+    public int getOperationDepth() {
+        return operationDepth;
     }
 
     /**

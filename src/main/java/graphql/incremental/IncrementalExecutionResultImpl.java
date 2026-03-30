@@ -3,14 +3,14 @@ package graphql.incremental;
 import graphql.ExecutionResult;
 import graphql.ExecutionResultImpl;
 import graphql.ExperimentalApi;
+import org.jspecify.annotations.Nullable;
 import org.reactivestreams.Publisher;
 
-import javax.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
 @ExperimentalApi
 public class IncrementalExecutionResultImpl extends ExecutionResultImpl implements IncrementalExecutionResult {
@@ -52,17 +52,28 @@ public class IncrementalExecutionResultImpl extends ExecutionResultImpl implemen
         return new Builder().from(executionResult);
     }
 
+    public static Builder fromIncrementalExecutionResult(IncrementalExecutionResult executionResult) {
+        return new Builder().from(executionResult);
+    }
+
+    @Override
+    public IncrementalExecutionResult transform(Consumer<ExecutionResult.Builder<?>> builderConsumer) {
+        var builder = fromIncrementalExecutionResult(this);
+        builderConsumer.accept(builder);
+        return builder.build();
+    }
+
     @Override
     public Map<String, Object> toSpecification() {
         Map<String, Object> map = new LinkedHashMap<>(super.toSpecification());
         map.put("hasNext", hasNext);
 
         if (this.incremental != null) {
-            map.put("incremental",
-                    this.incremental.stream()
-                            .map(IncrementalPayload::toSpecification)
-                            .collect(Collectors.toCollection(LinkedList::new))
-            );
+            LinkedList<Map<String, Object>> linkedList = new LinkedList<>();
+            for (IncrementalPayload incrementalPayload : this.incremental) {
+                linkedList.add(incrementalPayload.toSpecification());
+            }
+            map.put("incremental", linkedList);
         }
 
         return map;
@@ -91,6 +102,8 @@ public class IncrementalExecutionResultImpl extends ExecutionResultImpl implemen
         public Builder from(IncrementalExecutionResult incrementalExecutionResult) {
             super.from(incrementalExecutionResult);
             this.hasNext = incrementalExecutionResult.hasNext();
+            this.incremental = incrementalExecutionResult.getIncremental();
+            this.incrementalItemPublisher = incrementalExecutionResult.getIncrementalItemPublisher();
             return this;
         }
 

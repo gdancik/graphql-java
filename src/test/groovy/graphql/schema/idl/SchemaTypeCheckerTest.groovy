@@ -21,7 +21,6 @@ import spock.lang.Unroll
 import static graphql.schema.GraphQLScalarType.newScalar
 import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.DUPLICATED_KEYS_MESSAGE
 import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.EXPECTED_ENUM_MESSAGE
-import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.EXPECTED_LIST_MESSAGE
 import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.EXPECTED_NON_NULL_MESSAGE
 import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.EXPECTED_OBJECT_MESSAGE
 import static graphql.schema.idl.errors.DirectiveIllegalArgumentTypeError.MISSING_REQUIRED_FIELD_MESSAGE
@@ -33,7 +32,7 @@ import static java.lang.String.format
 class SchemaTypeCheckerTest extends Specification {
 
     static TypeDefinitionRegistry parseSDL(String spec) {
-        new SchemaParser().parse(spec)
+        new SchemaParser().parse(spec).readOnly()
     }
 
     def resolver = new TypeResolver() {
@@ -140,7 +139,7 @@ class SchemaTypeCheckerTest extends Specification {
         for (String name : resolvingNames) {
             runtimeBuilder.type(TypeRuntimeWiring.newTypeWiring(name).typeResolver(resolver))
         }
-        return new SchemaTypeChecker().checkTypeRegistry(types, runtimeBuilder.build())
+        return new SchemaTypeChecker().checkTypeRegistry(types.readOnly(), runtimeBuilder.build())
     }
 
     def "test missing type in object"() {
@@ -944,7 +943,7 @@ class SchemaTypeCheckerTest extends Specification {
         expect:
 
         !result.isEmpty()
-        result.size() == 4
+        result.size() == 5
     }
 
     def "test that field args are unique"() {
@@ -1512,13 +1511,14 @@ class SchemaTypeCheckerTest extends Specification {
 
         allowedArgType | argValue                                                                               | detailedMessage
         "ACustomDate"  | '"AFailingDate"'                                                                       | format(NOT_A_VALID_SCALAR_LITERAL_MESSAGE, "ACustomDate")
+        "[String]"     | 123                                                                                    | format(NOT_A_VALID_SCALAR_LITERAL_MESSAGE, "String")
         "[String!]"    | '["str", null]'                                                                        | format(EXPECTED_NON_NULL_MESSAGE)
         "[[String!]!]" | '[["str"], ["str2", null]]'                                                            | format(EXPECTED_NON_NULL_MESSAGE)
+        "[[String!]!]" | '[["str"], ["str2", "str3"], null]'                                                    | format(EXPECTED_NON_NULL_MESSAGE)
         "WEEKDAY"      | '"somestr"'                                                                            | format(EXPECTED_ENUM_MESSAGE, "StringValue")
         "WEEKDAY"      | 'SATURDAY'                                                                             | format(MUST_BE_VALID_ENUM_VALUE_MESSAGE, "SATURDAY", "MONDAY,TUESDAY")
         "UserInput"    | '{ fieldNonNull: "str", fieldNonNull: "dupeKey" }'                                     | format(DUPLICATED_KEYS_MESSAGE, "fieldNonNull")
         "UserInput"    | '{ fieldNonNull: "str", unknown: "field" }'                                            | format(UNKNOWN_FIELDS_MESSAGE, "unknown", "UserInput")
-        "UserInput"    | '{ fieldNonNull: "str", fieldArrayOfArray: ["ArrayInsteadOfArrayOfArray"] }'           | format(EXPECTED_LIST_MESSAGE, "StringValue")
         "UserInput"    | '{ fieldNonNull: "str", fieldNestedInput: "strInsteadOfObject" }'                      | format(EXPECTED_OBJECT_MESSAGE, "StringValue")
         "UserInput"    | '{ field: "missing the `fieldNonNull` entry"}'                                         | format(MISSING_REQUIRED_FIELD_MESSAGE, "fieldNonNull")
     }
@@ -1568,8 +1568,11 @@ class SchemaTypeCheckerTest extends Specification {
         "ACustomDate"  | '2002'
         "[String]"     | '["str", null]'
         "[String]"     | 'null'
+        "[String]"     | '"str"'          // see #2001
         "[String!]!"   | '["str"]'
         "[[String!]!]" | '[["str"], ["str2", "str3"]]'
+        "[[String]]"   | '[["str"], ["str2", null], null]'
+        "[[String!]]"  | '[["str"], ["str2", "str3"], null]'
         "WEEKDAY"      | 'MONDAY'
         "UserInput"    | '{ fieldNonNull: "str" }'
         "UserInput"    | '{ fieldNonNull: "str", fieldString: "Hey" }'
@@ -1820,5 +1823,121 @@ class SchemaTypeCheckerTest extends Specification {
 
         then:
         errorContaining(result, "member type 'Bar' in Union 'DuplicateBar' is not unique. The member types of a Union type must be unique.")
+    }
+
+    def "how many errors do we get on type extension field redefinition"() {
+        def sdl = """
+
+        type Query {
+            foo : Foo
+        }
+        
+        type Foo {
+            foo : String
+        }
+        
+        extend type Foo {
+           redefinedField : String
+        }
+        
+        extend type Foo {
+           otherField1 : String
+        }
+        
+        extend type Foo {
+           otherField2 : String
+        }
+        
+        extend type Foo {
+           redefinedField : String
+        }
+        
+        extend type Foo {
+           redefinedField : String
+        }
+
+        interface InterfaceType {
+            foo : String
+        }
+        
+        extend interface InterfaceType {
+           redefinedInterfaceField : String
+        }
+        
+        extend interface InterfaceType {
+           otherField1 : String
+        }
+        
+        extend interface InterfaceType {
+           otherField2 : String
+        }
+        
+        extend interface InterfaceType {
+           redefinedInterfaceField : String
+        }
+        
+        extend interface InterfaceType {
+           redefinedInterfaceField : String
+        }
+        
+        input Bar {
+            bar : String
+        }
+        
+        extend input Bar {
+           redefinedInputField : String
+        }
+        
+        extend input Bar {
+           otherField1 : String
+        }
+        
+        extend input Bar {
+           otherField2 : String
+        }
+        
+        extend input Bar {
+           redefinedInputField : String
+        }
+        
+        extend input Bar {
+           redefinedInputField : String
+        }
+
+        enum Baz {
+            baz
+        }
+        
+        extend enum Baz {
+           redefinedEnumValue
+        }
+        
+        extend enum Baz {
+           otherField1
+        }
+        
+        extend enum Baz {
+           otherField2
+        }
+        
+        extend enum Baz {
+           redefinedEnumValue
+        }
+        
+        extend enum Baz {
+           redefinedEnumValue
+        }
+            
+        """
+
+        when:
+        def result = check(sdl)
+
+        then:
+        result.size() == 8
+        errorContaining(result, "'Foo' extension type [@n:n] tried to redefine field 'redefinedField' [@n:n]")
+        errorContaining(result, "'InterfaceType' extension type [@n:n] tried to redefine field 'redefinedInterfaceField' [@n:n]")
+        errorContaining(result, "'Bar' extension type [@n:n] tried to redefine field 'redefinedInputField' [@n:n]")
+        errorContaining(result, "'Baz' extension type [@n:n] tried to redefine enum value 'redefinedEnumValue' [@n:n]")
     }
 }

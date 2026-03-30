@@ -7,6 +7,7 @@ import graphql.ExecutionResult;
 import graphql.GraphQLContext;
 import graphql.Internal;
 import graphql.PublicApi;
+import graphql.collect.ImmutableKit;
 import graphql.execution.ExecutionContext;
 import graphql.execution.MergedField;
 import graphql.execution.MergedSelectionSet;
@@ -36,7 +37,7 @@ import graphql.schema.GraphQLScalarType;
 import graphql.schema.GraphQLSchema;
 import graphql.schema.GraphQLUnionType;
 import graphql.schema.InputValueWithState;
-import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NonNull;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -48,7 +49,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static graphql.Assert.assertTrue;
 import static graphql.Scalars.GraphQLBoolean;
@@ -115,26 +115,21 @@ public class Introspection {
      */
     public static Optional<ExecutionResult> isIntrospectionSensible(MergedSelectionSet mergedSelectionSet, ExecutionContext executionContext) {
         GraphQLContext graphQLContext = executionContext.getGraphQLContext();
-        MergedField schemaField = mergedSelectionSet.getSubField(SchemaMetaFieldDef.getName());
-        if (schemaField != null) {
-            if (!isIntrospectionEnabled(graphQLContext)) {
-                return mkDisabledError(schemaField);
+
+        for (String key : mergedSelectionSet.getKeys()) {
+            String fieldName = mergedSelectionSet.getSubField(key).getName();
+            if (fieldName.equals(SchemaMetaFieldDef.getName())
+                    || fieldName.equals(TypeMetaFieldDef.getName())) {
+                if (!isIntrospectionEnabled(graphQLContext)) {
+                    return mkDisabledError(mergedSelectionSet.getSubField(key));
+                }
+                break;
             }
-        }
-        MergedField typeField = mergedSelectionSet.getSubField(TypeMetaFieldDef.getName());
-        if (typeField != null) {
-            if (!isIntrospectionEnabled(graphQLContext)) {
-                return mkDisabledError(typeField);
-            }
-        }
-        if (schemaField != null || typeField != null)
-        {
-            return GoodFaithIntrospection.checkIntrospection(executionContext);
         }
         return Optional.empty();
     }
 
-    @NotNull
+    @NonNull
     private static Optional<ExecutionResult> mkDisabledError(MergedField schemaField) {
         IntrospectionDisabledError error = new IntrospectionDisabledError(schemaField.getSingleField().getSourceLocation());
         return Optional.of(ExecutionResult.newExecutionResult().addError(error).build());
@@ -144,7 +139,7 @@ public class Introspection {
         if (!isEnabledJvmWide()) {
             return false;
         }
-        return !graphQlContext.getOrDefault(INTROSPECTION_DISABLED, false);
+        return !graphQlContext.getBoolean(INTROSPECTION_DISABLED, false);
     }
 
     private static final Map<FieldCoordinates, IntrospectionDataFetcher<?>> introspectionDataFetchers = new LinkedHashMap<>();
@@ -199,7 +194,7 @@ public class Introspection {
     public static final GraphQLEnumType __TypeKind = GraphQLEnumType.newEnum()
             .name("__TypeKind")
             .description("An enum describing what kind of type a given __Type is")
-            .value("SCALAR", TypeKind.SCALAR, "Indicates this type is a scalar. 'specifiedByURL' is a valid field")
+            .value("SCALAR", TypeKind.SCALAR, "Indicates this type is a scalar. `specifiedByURL` is a valid field")
             .value("OBJECT", TypeKind.OBJECT, "Indicates this type is an object. `fields` and `interfaces` are valid fields.")
             .value("INTERFACE", TypeKind.INTERFACE, "Indicates this type is an interface. `fields` and `possibleTypes` are valid fields.")
             .value("UNION", TypeKind.UNION, "Indicates this type is a union. `possibleTypes` is a valid field.")
@@ -356,9 +351,8 @@ public class Introspection {
             Object type = environment.getSource();
             GraphQLFieldDefinition fieldDef = (GraphQLFieldDefinition) type;
             Boolean includeDeprecated = environment.getArgument("includeDeprecated");
-            return fieldDef.getArguments().stream()
-                    .filter(arg -> includeDeprecated || !arg.isDeprecated())
-                    .collect(Collectors.toList());
+            return ImmutableKit.filter(fieldDef.getArguments(),
+                    arg -> includeDeprecated || !arg.isDeprecated());
         };
         register(__Field, "name", nameDataFetcher);
         register(__Field, "description", descriptionDataFetcher);
@@ -406,9 +400,8 @@ public class Introspection {
             if (includeDeprecated) {
                 return fieldDefinitions;
             }
-            return fieldDefinitions.stream()
-                    .filter(field -> !field.isDeprecated())
-                    .collect(Collectors.toList());
+            return ImmutableKit.filter(fieldDefinitions,
+                    field -> !field.isDeprecated());
         }
         return null;
     };
@@ -444,9 +437,8 @@ public class Introspection {
             if (includeDeprecated) {
                 return values;
             }
-            return values.stream()
-                    .filter(enumValue -> !enumValue.isDeprecated())
-                    .collect(Collectors.toList());
+            return ImmutableKit.filter(values,
+                    enumValue -> !enumValue.isDeprecated());
         }
         return null;
     };
@@ -463,9 +455,8 @@ public class Introspection {
             if (includeDeprecated) {
                 return inputFields;
             }
-            return inputFields
-                    .stream().filter(inputField -> !inputField.isDeprecated())
-                    .collect(Collectors.toList());
+            return ImmutableKit.filter(inputFields,
+                    inputField -> !inputField.isDeprecated());
         }
         return null;
     };
@@ -650,9 +641,8 @@ public class Introspection {
         IntrospectionDataFetcher<?> argsDataFetcher = environment -> {
             GraphQLDirective directive = environment.getSource();
             Boolean includeDeprecated = environment.getArgument("includeDeprecated");
-            return directive.getArguments().stream()
-                    .filter(arg -> includeDeprecated || !arg.isDeprecated())
-                    .collect(Collectors.toList());
+            return ImmutableKit.filter(directive.getArguments(),
+                    arg -> includeDeprecated || !arg.isDeprecated());
         };
         register(__Directive, "name", nameDataFetcher);
         register(__Directive, "description", descriptionDataFetcher);
@@ -683,11 +673,11 @@ public class Introspection {
                     .type(__Type))
             .field(newFieldDefinition()
                     .name("directives")
-                    .description("'A list of all directives supported by this server.")
+                    .description("A list of all directives supported by this server.")
                     .type(nonNull(list(nonNull(__Directive)))))
             .field(newFieldDefinition()
                     .name("subscriptionType")
-                    .description("'If this server support subscription, the type that subscription operations will be rooted at.")
+                    .description("If this server support subscription, the type that subscription operations will be rooted at.")
                     .type(__Type))
             .build();
 
@@ -784,7 +774,8 @@ public class Introspection {
 
     /**
      * This will look up a field definition by name, and understand that fields like __typename and __schema are special
-     * and take precedence in field resolution
+     * and take precedence in field resolution.  If the parent type is a union type, then the only field allowed
+     * is `__typename`.
      *
      * @param schema     the schema to use
      * @param parentType the type of the parent object
@@ -794,6 +785,43 @@ public class Introspection {
      */
     public static GraphQLFieldDefinition getFieldDef(GraphQLSchema schema, GraphQLCompositeType parentType, String fieldName) {
 
+        GraphQLFieldDefinition fieldDefinition = getSystemFieldDef(schema, parentType, fieldName);
+        if (fieldDefinition != null) {
+            return fieldDefinition;
+        }
+
+        assertTrue(parentType instanceof GraphQLFieldsContainer, "should not happen : parent type must be an object or interface %s", parentType);
+        GraphQLFieldsContainer fieldsContainer = (GraphQLFieldsContainer) parentType;
+        fieldDefinition = schema.getCodeRegistry().getFieldVisibility().getFieldDefinition(fieldsContainer, fieldName);
+        assertTrue(fieldDefinition != null, "Unknown field '%s' for type %s", fieldName, fieldsContainer.getName());
+        return fieldDefinition;
+    }
+
+    /**
+     * This will look up a field definition by name, and understand that fields like __typename and __schema are special
+     * and take precedence in field resolution
+     *
+     * @param schema     the schema to use
+     * @param parentType the type of the parent {@link GraphQLFieldsContainer}
+     * @param fieldName  the field to look up
+     *
+     * @return a field definition otherwise throws an assertion exception if it's null
+     */
+    public static GraphQLFieldDefinition getFieldDefinition(GraphQLSchema schema, GraphQLFieldsContainer parentType, String fieldName) {
+        // this method is optimized to look up the most common case first (type for field) and hence suits the hot path of the execution engine
+        // and as a small benefit does not allocate any assertions unless it completely failed
+        GraphQLFieldDefinition fieldDefinition = schema.getCodeRegistry().getFieldVisibility().getFieldDefinition(parentType, fieldName);
+        if (fieldDefinition == null) {
+            // we look up system fields second because they are less likely to be the field in question
+            fieldDefinition = getSystemFieldDef(schema, parentType, fieldName);
+            if (fieldDefinition == null) {
+                Assert.assertShouldNeverHappen(String.format("Unknown field '%s' for type %s", fieldName, parentType.getName()));
+            }
+        }
+        return fieldDefinition;
+    }
+
+    private static GraphQLFieldDefinition getSystemFieldDef(GraphQLSchema schema, GraphQLCompositeType parentType, String fieldName) {
         if (schema.getQueryType() == parentType) {
             if (fieldName.equals(schema.getIntrospectionSchemaFieldDefinition().getName())) {
                 return schema.getIntrospectionSchemaFieldDefinition();
@@ -805,11 +833,6 @@ public class Introspection {
         if (fieldName.equals(schema.getIntrospectionTypenameFieldDefinition().getName())) {
             return schema.getIntrospectionTypenameFieldDefinition();
         }
-
-        assertTrue(parentType instanceof GraphQLFieldsContainer, () -> String.format("should not happen : parent type must be an object or interface %s", parentType));
-        GraphQLFieldsContainer fieldsContainer = (GraphQLFieldsContainer) parentType;
-        GraphQLFieldDefinition fieldDefinition = schema.getCodeRegistry().getFieldVisibility().getFieldDefinition(fieldsContainer, fieldName);
-        assertTrue(fieldDefinition != null, () -> String.format("Unknown field '%s' for type %s", fieldName, fieldsContainer.getName()));
-        return fieldDefinition;
+        return null;
     }
 }

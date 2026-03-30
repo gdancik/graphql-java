@@ -10,6 +10,7 @@ import graphql.execution.instrumentation.parameters.InstrumentationExecutionStra
 import graphql.execution.instrumentation.parameters.InstrumentationFieldCompleteParameters
 import graphql.execution.instrumentation.parameters.InstrumentationFieldFetchParameters
 import graphql.execution.instrumentation.parameters.InstrumentationFieldParameters
+import graphql.execution.instrumentation.parameters.InstrumentationReactiveResultsParameters
 import graphql.execution.instrumentation.parameters.InstrumentationValidationParameters
 import graphql.language.Document
 import graphql.schema.DataFetcher
@@ -33,8 +34,8 @@ class ModernTestingInstrumentation implements Instrumentation {
     boolean useOnDispatch = false
 
     @Override
-    InstrumentationState createState(InstrumentationCreateStateParameters parameters) {
-        return instrumentationState
+    CompletableFuture<InstrumentationState> createStateAsync(InstrumentationCreateStateParameters parameters) {
+        return CompletableFuture.completedFuture(instrumentationState)
     }
 
     @Override
@@ -62,6 +63,13 @@ class ModernTestingInstrumentation implements Instrumentation {
     }
 
     @Override
+    InstrumentationContext<Void> beginReactiveResults(InstrumentationReactiveResultsParameters parameters, InstrumentationState state) {
+        assert state == instrumentationState
+        def resultType = parameters.resultType.toString().toLowerCase()
+        return new TestingInstrumentContext("reactive-results-$resultType", executionList, throwableList, useOnDispatch)
+    }
+
+    @Override
     ExecuteObjectInstrumentationContext beginExecuteObject(InstrumentationExecutionStrategyParameters parameters, InstrumentationState state) {
         assert state == instrumentationState
         return new TestingExecuteObjectInstrumentationContext("execute-object", executionList, throwableList, useOnDispatch)
@@ -80,27 +88,15 @@ class ModernTestingInstrumentation implements Instrumentation {
     }
 
     @Override
-    InstrumentationContext<ExecutionResult> beginField(InstrumentationFieldParameters parameters, InstrumentationState state) {
-        assert state == instrumentationState
-        return new TestingInstrumentContext("field-$parameters.field.name", executionList, throwableList, useOnDispatch)
-    }
-
-    @Override
     InstrumentationContext<Object> beginFieldExecution(InstrumentationFieldParameters parameters, InstrumentationState state) {
         assert state == instrumentationState
         return new TestingInstrumentContext("field-$parameters.field.name", executionList, throwableList, useOnDispatch)
     }
 
     @Override
-    InstrumentationContext<Object> beginFieldFetch(InstrumentationFieldFetchParameters parameters, InstrumentationState state) {
+    FieldFetchingInstrumentationContext beginFieldFetching(InstrumentationFieldFetchParameters parameters, InstrumentationState state) {
         assert state == instrumentationState
-        return new TestingInstrumentContext("fetch-$parameters.field.name", executionList, throwableList, useOnDispatch)
-    }
-
-    @Override
-    InstrumentationContext<ExecutionResult> beginFieldComplete(InstrumentationFieldCompleteParameters parameters, InstrumentationState state) {
-        assert state == instrumentationState
-        return new TestingInstrumentContext("complete-$parameters.field.name", executionList, throwableList, useOnDispatch)
+        return new TestingFieldFetchingInstrumentationContext("fetch-$parameters.field.name", executionList, throwableList, useOnDispatch)
     }
 
     @Override
@@ -110,15 +106,15 @@ class ModernTestingInstrumentation implements Instrumentation {
     }
 
     @Override
-    InstrumentationContext<ExecutionResult> beginFieldListComplete(InstrumentationFieldCompleteParameters parameters, InstrumentationState state) {
+    InstrumentationContext<Object> beginFieldListCompletion(InstrumentationFieldCompleteParameters parameters, InstrumentationState state) {
         assert state == instrumentationState
         return new TestingInstrumentContext("complete-list-$parameters.field.name", executionList, throwableList, useOnDispatch)
     }
 
     @Override
-    InstrumentationContext<Object> beginFieldListCompletion(InstrumentationFieldCompleteParameters parameters, InstrumentationState state) {
+    InstrumentationContext<Object> beginDeferredField(InstrumentationFieldParameters parameters, InstrumentationState state) {
         assert state == instrumentationState
-        return new TestingInstrumentContext("complete-list-$parameters.field.name", executionList, throwableList, useOnDispatch)
+        return new TestingInstrumentContext("deferred-field-$parameters.field.name", executionList, throwableList, useOnDispatch)
     }
 
     @Override

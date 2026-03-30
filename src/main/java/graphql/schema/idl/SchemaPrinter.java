@@ -1,6 +1,7 @@
 package graphql.schema.idl;
 
 import graphql.Assert;
+import graphql.Directives;
 import graphql.DirectivesUtil;
 import graphql.GraphQLContext;
 import graphql.PublicApi;
@@ -19,6 +20,7 @@ import graphql.language.InterfaceTypeDefinition;
 import graphql.language.ObjectTypeDefinition;
 import graphql.language.ScalarTypeDefinition;
 import graphql.language.SchemaDefinition;
+import graphql.language.SchemaExtensionDefinition;
 import graphql.language.TypeDefinition;
 import graphql.language.UnionTypeDefinition;
 import graphql.schema.DefaultGraphqlTypeComparatorRegistry;
@@ -63,6 +65,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static graphql.Directives.DeprecatedDirective;
+import static graphql.Directives.SpecifiedByDirective;
 import static graphql.Scalars.GraphQLString;
 import static graphql.schema.visibility.DefaultGraphqlFieldVisibility.DEFAULT_FIELD_VISIBILITY;
 import static graphql.util.EscapeUtil.escapeJsonString;
@@ -79,7 +82,7 @@ public class SchemaPrinter {
      * This predicate excludes all directives which are specified by the GraphQL Specification.
      * Printing these directives is optional.
      */
-    public static final Predicate<String> ExcludeGraphQLSpecifiedDirectivesPredicate = d -> !DirectiveInfo.isGraphqlSpecifiedDirective(d);
+    public static final Predicate<String> ExcludeGraphQLSpecifiedDirectivesPredicate = d -> !Directives.isBuiltInDirective(d);
 
     /**
      * Options to use when printing a schema
@@ -283,7 +286,7 @@ public class SchemaPrinter {
         /**
          * This is a Predicate that decides whether a directive definition is printed.
          *
-         * @param includeDirectiveDefinition the predicate to decide of a directive defintion is printed
+         * @param includeDirectiveDefinition the predicate to decide of a directive definition is printed
          *
          * @return new instance of options
          */
@@ -482,7 +485,7 @@ public class SchemaPrinter {
 
     /**
      * This can print an in memory GraphQL IDL document back to a logical schema definition.
-     * If you want to turn a Introspection query result into a Document (and then into a printed
+     * If you want to turn an Introspection query result into a Document (and then into a printed
      * schema) then use {@link graphql.introspection.IntrospectionResultToSchema#createSchemaDefinition(java.util.Map)}
      * first to get the {@link graphql.language.Document} and then print that.
      *
@@ -558,7 +561,12 @@ public class SchemaPrinter {
                     printAsAst(out, type.getDefinition(), type.getExtensionDefinitions());
                 } else {
                     printComments(out, type, "");
-                    out.format("scalar %s%s\n\n", type.getName(), directivesString(GraphQLScalarType.class, type));
+                    List<GraphQLAppliedDirective> directives = DirectivesUtil.toAppliedDirectives(type).stream()
+                            .filter(d -> !d.getName().equals(SpecifiedByDirective.getName()))
+                            .collect(toList());
+                    out.format("scalar %s%s%s\n\n", type.getName(),
+                            directivesString(GraphQLScalarType.class, directives),
+                            specifiedByUrlString(type));
                 }
             }
         };
@@ -774,6 +782,17 @@ public class SchemaPrinter {
     }
 
     /**
+     * This will return true if the options say to use the AST and we have an AST element
+     *
+     * @param definition the AST schema definition
+     *
+     * @return true if we should print using AST nodes
+     */
+    private boolean shouldPrintAsAst(SchemaDefinition definition) {
+        return options.isUseAstDefinitions() && definition != null;
+    }
+
+    /**
      * This will print out a runtime graphql schema element using its contained AST type definition.  This
      * must be guarded by a called to {@link #shouldPrintAsAst(TypeDefinition)}
      *
@@ -792,6 +811,25 @@ public class SchemaPrinter {
         out.print('\n');
     }
 
+    /**
+     * This will print out a runtime graphql schema block using its AST definition.  This
+     * must be guarded by a called to {@link #shouldPrintAsAst(SchemaDefinition)}
+     *
+     * @param out        the output writer
+     * @param definition the AST schema definition
+     * @param extensions a list of schema definition extensions
+     */
+    private void printAsAst(PrintWriter out, SchemaDefinition definition, List<SchemaExtensionDefinition> extensions) {
+        out.printf("%s\n", AstPrinter.printAst(definition));
+        if (extensions != null) {
+            for (SchemaExtensionDefinition extension : extensions) {
+                out.printf("\n%s\n", AstPrinter.printAst(extension));
+            }
+        }
+        out.print('\n');
+    }
+
+
     private static String printAst(InputValueWithState value, GraphQLInputType type) {
         return AstPrinter.printAst(ValuesResolver.valueToLiteral(value, type, GraphQLContext.getDefault(), Locale.getDefault()));
     }
@@ -803,7 +841,7 @@ public class SchemaPrinter {
             GraphQLObjectType subscriptionType = schema.getSubscriptionType();
 
             // when serializing a GraphQL schema using the type system language, a
-            // schema definition should be omitted if only uses the default root type names.
+            // schema definition should be omitted only if it uses the default root type names.
             boolean needsSchemaPrinted = options.isIncludeSchemaDefinition();
 
             if (!needsSchemaPrinted) {
@@ -819,21 +857,25 @@ public class SchemaPrinter {
             }
 
             if (needsSchemaPrinted) {
-                if (hasAstDefinitionComments(schema) || hasDescription(schema)) {
-                    out.print(printComments(schema, ""));
+                if (shouldPrintAsAst(schema.getDefinition())) {
+                    printAsAst(out, schema.getDefinition(), schema.getExtensionDefinitions());
+                } else {
+                    if (hasAstDefinitionComments(schema) || hasDescription(schema)) {
+                        out.print(printComments(schema, ""));
+                    }
+                    List<GraphQLAppliedDirective> directives = DirectivesUtil.toAppliedDirectives(schema.getSchemaAppliedDirectives(), schema.getSchemaDirectives());
+                    out.format("schema %s{\n", directivesString(GraphQLSchemaElement.class, directives));
+                    if (queryType != null) {
+                        out.format("  query: %s\n", queryType.getName());
+                    }
+                    if (mutationType != null) {
+                        out.format("  mutation: %s\n", mutationType.getName());
+                    }
+                    if (subscriptionType != null) {
+                        out.format("  subscription: %s\n", subscriptionType.getName());
+                    }
+                    out.format("}\n\n");
                 }
-                List<GraphQLAppliedDirective> directives = DirectivesUtil.toAppliedDirectives(schema.getSchemaAppliedDirectives(), schema.getSchemaDirectives());
-                out.format("schema %s{\n", directivesString(GraphQLSchemaElement.class, directives));
-                if (queryType != null) {
-                    out.format("  query: %s\n", queryType.getName());
-                }
-                if (mutationType != null) {
-                    out.format("  mutation: %s\n", mutationType.getName());
-                }
-                if (subscriptionType != null) {
-                    out.format("  subscription: %s\n", subscriptionType.getName());
-                }
-                out.format("}\n\n");
             }
         };
     }
@@ -910,7 +952,7 @@ public class SchemaPrinter {
     String directivesString(Class<? extends GraphQLSchemaElement> parentType, boolean isDeprecated, GraphQLDirectiveContainer directiveContainer) {
         List<GraphQLAppliedDirective> directives;
         if (isDeprecated) {
-            directives = addDeprecatedDirectiveIfNeeded(directiveContainer);
+            directives = addOrUpdateDeprecatedDirectiveIfNeeded(directiveContainer);
         } else {
             directives = DirectivesUtil.toAppliedDirectives(directiveContainer);
         }
@@ -1006,23 +1048,48 @@ public class SchemaPrinter {
                 .count() == 1;
     }
 
-    private List<GraphQLAppliedDirective> addDeprecatedDirectiveIfNeeded(GraphQLDirectiveContainer directiveContainer) {
+    private List<GraphQLAppliedDirective> addOrUpdateDeprecatedDirectiveIfNeeded(GraphQLDirectiveContainer directiveContainer) {
         List<GraphQLAppliedDirective> directives = DirectivesUtil.toAppliedDirectives(directiveContainer);
+        String reason = getDeprecationReason(directiveContainer);
+
         if (!hasDeprecatedDirective(directives) && isDeprecatedDirectiveAllowed()) {
             directives = new ArrayList<>(directives);
-            String reason = getDeprecationReason(directiveContainer);
-            GraphQLAppliedDirectiveArgument arg = GraphQLAppliedDirectiveArgument.newArgument()
-                    .name("reason")
-                    .valueProgrammatic(reason)
-                    .type(GraphQLString)
-                    .build();
-            GraphQLAppliedDirective directive = GraphQLAppliedDirective.newDirective()
-                    .name("deprecated")
-                    .argument(arg)
-                    .build();
-            directives.add(directive);
+            directives.add(createDeprecatedDirective(reason));
+        } else if (hasDeprecatedDirective(directives) && isDeprecatedDirectiveAllowed()) {
+            // Update deprecated reason in case modified by schema transform
+            directives = updateDeprecatedDirective(directives, reason);
         }
         return directives;
+    }
+
+    private GraphQLAppliedDirective createDeprecatedDirective(String reason) {
+        GraphQLAppliedDirectiveArgument arg = GraphQLAppliedDirectiveArgument.newArgument()
+                .name("reason")
+                .valueProgrammatic(reason)
+                .type(GraphQLString)
+                .build();
+        return GraphQLAppliedDirective.newDirective()
+                .name("deprecated")
+                .argument(arg)
+                .build();
+    }
+
+    private List<GraphQLAppliedDirective> updateDeprecatedDirective(List<GraphQLAppliedDirective> directives, String reason) {
+        GraphQLAppliedDirectiveArgument newArg = GraphQLAppliedDirectiveArgument.newArgument()
+                .name("reason")
+                .valueProgrammatic(reason)
+                .type(GraphQLString)
+                .build();
+
+        return directives.stream().map(d -> {
+            if (isDeprecatedDirective(d)) {
+                // Don't include reason is deliberately replaced with NOT_SET, for example in Anonymizer
+                if (d.getArgument("reason").getArgumentValue() != InputValueWithState.NOT_SET) {
+                    return d.transform(builder -> builder.argument(newArg));
+                }
+            }
+            return d;
+        }).collect(toList());
     }
 
     private String getDeprecationReason(GraphQLDirectiveContainer directiveContainer) {
@@ -1041,6 +1108,14 @@ public class SchemaPrinter {
         } else {
             return Assert.assertShouldNeverHappen();
         }
+    }
+
+    private String specifiedByUrlString(GraphQLScalarType scalarType) {
+        String url = scalarType.getSpecifiedByUrl();
+        if (url == null || !options.getIncludeDirective().test(SpecifiedByDirective.getName())) {
+            return "";
+        }
+        return " @specifiedBy(url : \"" + escapeJsonString(url) + "\")";
     }
 
     private String directiveDefinition(GraphQLDirective directive) {

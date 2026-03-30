@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
+import static graphql.Assert.assertNotEmpty;
 import static graphql.Assert.assertNotNull;
 import static graphql.Assert.assertValidName;
 import static graphql.introspection.Introspection.DirectiveLocation;
@@ -51,7 +52,8 @@ public class GraphQLDirective implements GraphQLNamedSchemaElement {
                              List<GraphQLArgument> arguments,
                              DirectiveDefinition definition) {
         assertValidName(name);
-        assertNotNull(arguments, () -> "arguments can't be null");
+        assertNotNull(arguments, "arguments can't be null");
+        assertNotEmpty(locations, "locations can't be empty");
         this.name = name;
         this.description = description;
         this.repeatable = repeatable;
@@ -229,13 +231,13 @@ public class GraphQLDirective implements GraphQLNamedSchemaElement {
         }
 
         public Builder argument(GraphQLArgument argument) {
-            assertNotNull(argument, () -> "argument must not be null");
+            assertNotNull(argument, "argument must not be null");
             arguments.put(argument.getName(), argument);
             return this;
         }
 
         public Builder replaceArguments(List<GraphQLArgument> arguments) {
-            assertNotNull(arguments, () -> "arguments must not be null");
+            assertNotNull(arguments, "arguments must not be null");
             this.arguments.clear();
             for (GraphQLArgument argument : arguments) {
                 this.arguments.put(argument.getName(), argument);

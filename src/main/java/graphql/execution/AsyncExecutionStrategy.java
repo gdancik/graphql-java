@@ -39,7 +39,6 @@ public class AsyncExecutionStrategy extends AbstractAsyncExecutionStrategy {
     @SuppressWarnings("FutureReturnValueIgnored")
     public CompletableFuture<ExecutionResult> execute(ExecutionContext executionContext, ExecutionStrategyParameters parameters) throws NonNullableFieldWasNullException {
         DataLoaderDispatchStrategy dataLoaderDispatcherStrategy = executionContext.getDataLoaderDispatcherStrategy();
-        dataLoaderDispatcherStrategy.executionStrategy(executionContext, parameters);
         Instrumentation instrumentation = executionContext.getInstrumentation();
         InstrumentationExecutionStrategyParameters instrumentationParameters = new InstrumentationExecutionStrategyParameters(executionContext, parameters);
 
@@ -54,7 +53,11 @@ public class AsyncExecutionStrategy extends AbstractAsyncExecutionStrategy {
         }
 
         DeferredExecutionSupport deferredExecutionSupport = createDeferredExecutionSupport(executionContext, parameters);
+
+        dataLoaderDispatcherStrategy.executionStrategy(executionContext, parameters, deferredExecutionSupport.getNonDeferredFieldNames(fieldNames).size());
         Async.CombinedBuilder<FieldValueInfo> futures = getAsyncFieldValueInfo(executionContext, parameters, deferredExecutionSupport);
+        dataLoaderDispatcherStrategy.finishedFetching(executionContext, parameters);
+
 
         CompletableFuture<ExecutionResult> overallResult = new CompletableFuture<>();
         executionStrategyCtx.onDispatched();
@@ -63,6 +66,8 @@ public class AsyncExecutionStrategy extends AbstractAsyncExecutionStrategy {
             List<String> fieldsExecutedOnInitialResult = deferredExecutionSupport.getNonDeferredFieldNames(fieldNames);
 
             BiConsumer<List<Object>, Throwable> handleResultsConsumer = handleResults(executionContext, fieldsExecutedOnInitialResult, overallResult);
+            throwable = executionContext.possibleCancellation(throwable);
+
             if (throwable != null) {
                 handleResultsConsumer.accept(null, throwable.getCause());
                 return;
@@ -70,7 +75,7 @@ public class AsyncExecutionStrategy extends AbstractAsyncExecutionStrategy {
 
             Async.CombinedBuilder<Object> fieldValuesFutures = Async.ofExpectedSize(completeValueInfos.size());
             for (FieldValueInfo completeValueInfo : completeValueInfos) {
-                fieldValuesFutures.add(completeValueInfo.getFieldValueFuture());
+                fieldValuesFutures.addObject(completeValueInfo.getFieldValueObject());
             }
             dataLoaderDispatcherStrategy.executionStrategyOnFieldValuesInfo(completeValueInfos, parameters);
             executionStrategyCtx.onFieldValuesInfo(completeValueInfos);
@@ -88,4 +93,5 @@ public class AsyncExecutionStrategy extends AbstractAsyncExecutionStrategy {
         overallResult.whenComplete(executionStrategyCtx::onCompleted);
         return overallResult;
     }
+
 }

@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.jspecify.annotations.NullUnmarked;
 
 import static graphql.Assert.assertNotNull;
 import static graphql.Assert.assertShouldNeverHappen;
@@ -49,23 +50,29 @@ public class QueryTraverser {
     private CoercedVariables coercedVariables;
 
     private final GraphQLCompositeType rootParentType;
+    private final QueryTraversalOptions options;
 
     private QueryTraverser(GraphQLSchema schema,
                            Document document,
                            String operation,
-                           CoercedVariables coercedVariables) {
+                           CoercedVariables coercedVariables,
+                           QueryTraversalOptions options
+                           ) {
         this.schema = schema;
         NodeUtil.GetOperationResult getOperationResult = NodeUtil.getOperation(document, operation);
         this.fragmentsByName = getOperationResult.fragmentsByName;
         this.roots = singletonList(getOperationResult.operationDefinition);
         this.rootParentType = getRootTypeFromOperation(getOperationResult.operationDefinition);
         this.coercedVariables = coercedVariables;
+        this.options = options;
     }
 
     private QueryTraverser(GraphQLSchema schema,
                            Document document,
                            String operation,
-                           RawVariables rawVariables) {
+                           RawVariables rawVariables,
+                           QueryTraversalOptions options
+    ) {
         this.schema = schema;
         NodeUtil.GetOperationResult getOperationResult = NodeUtil.getOperation(document, operation);
         List<VariableDefinition> variableDefinitions = getOperationResult.operationDefinition.getVariableDefinitions();
@@ -73,18 +80,22 @@ public class QueryTraverser {
         this.roots = singletonList(getOperationResult.operationDefinition);
         this.rootParentType = getRootTypeFromOperation(getOperationResult.operationDefinition);
         this.coercedVariables = ValuesResolver.coerceVariableValues(schema, variableDefinitions, rawVariables, GraphQLContext.getDefault(), Locale.getDefault());
+        this.options = options;
     }
 
     private QueryTraverser(GraphQLSchema schema,
                            Node root,
                            GraphQLCompositeType rootParentType,
                            Map<String, FragmentDefinition> fragmentsByName,
-                           CoercedVariables coercedVariables) {
+                           CoercedVariables coercedVariables,
+                           QueryTraversalOptions options
+    ) {
         this.schema = schema;
         this.roots = Collections.singleton(root);
         this.rootParentType = rootParentType;
         this.fragmentsByName = fragmentsByName;
         this.coercedVariables = coercedVariables;
+        this.options = options;
     }
 
     public Object visitDepthFirst(QueryVisitor queryVisitor) {
@@ -191,7 +202,12 @@ public class QueryTraverser {
         }
 
         NodeTraverser nodeTraverser = new NodeTraverser(rootVars, this::childrenOf);
-        NodeVisitorWithTypeTracking nodeVisitorWithTypeTracking = new NodeVisitorWithTypeTracking(preOrderCallback, postOrderCallback, coercedVariables.toMap(), schema, fragmentsByName);
+        NodeVisitorWithTypeTracking nodeVisitorWithTypeTracking = new NodeVisitorWithTypeTracking(preOrderCallback,
+                postOrderCallback,
+                coercedVariables.toMap(),
+                schema,
+                fragmentsByName,
+                options);
         return nodeTraverser.depthFirst(nodeVisitorWithTypeTracking, roots);
     }
 
@@ -200,6 +216,7 @@ public class QueryTraverser {
     }
 
     @PublicApi
+    @NullUnmarked
     public static class Builder {
         private GraphQLSchema schema;
         private Document document;
@@ -210,6 +227,7 @@ public class QueryTraverser {
         private Node root;
         private GraphQLCompositeType rootParentType;
         private Map<String, FragmentDefinition> fragmentsByName;
+        private QueryTraversalOptions options = QueryTraversalOptions.defaultOptions();
 
 
         /**
@@ -220,7 +238,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder schema(GraphQLSchema schema) {
-            this.schema = assertNotNull(schema, () -> "schema can't be null");
+            this.schema = assertNotNull(schema, "schema can't be null");
             return this;
         }
 
@@ -246,7 +264,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder document(Document document) {
-            this.document = assertNotNull(document, () -> "document can't be null");
+            this.document = assertNotNull(document, "document can't be null");
             return this;
         }
 
@@ -258,7 +276,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder variables(Map<String, Object> variables) {
-            assertNotNull(variables, () -> "variables can't be null");
+            assertNotNull(variables, "variables can't be null");
             this.rawVariables = RawVariables.of(variables);
             return this;
         }
@@ -271,7 +289,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder coercedVariables(CoercedVariables coercedVariables) {
-            assertNotNull(coercedVariables, () -> "coercedVariables can't be null");
+            assertNotNull(coercedVariables, "coercedVariables can't be null");
             this.coercedVariables = coercedVariables;
             return this;
         }
@@ -285,7 +303,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder root(Node root) {
-            this.root = assertNotNull(root, () -> "root can't be null");
+            this.root = assertNotNull(root, "root can't be null");
             return this;
         }
 
@@ -297,7 +315,7 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder rootParentType(GraphQLCompositeType rootParentType) {
-            this.rootParentType = assertNotNull(rootParentType, () -> "rootParentType can't be null");
+            this.rootParentType = assertNotNull(rootParentType, "rootParentType can't be null");
             return this;
         }
 
@@ -309,7 +327,18 @@ public class QueryTraverser {
          * @return this builder
          */
         public Builder fragmentsByName(Map<String, FragmentDefinition> fragmentsByName) {
-            this.fragmentsByName = assertNotNull(fragmentsByName, () -> "fragmentsByName can't be null");
+            this.fragmentsByName = assertNotNull(fragmentsByName, "fragmentsByName can't be null");
+            return this;
+        }
+
+        /**
+         * Sets the options to use while traversing
+         *
+         * @param options the options to use
+         * @return this builder
+         */
+        public Builder options(QueryTraversalOptions options) {
+            this.options = assertNotNull(options, "options can't be null");
             return this;
         }
 
@@ -320,17 +349,35 @@ public class QueryTraverser {
             checkState();
             if (document != null) {
                 if (rawVariables != null) {
-                    return new QueryTraverser(schema, document, operation, rawVariables);
+                    return new QueryTraverser(schema,
+                            document,
+                            operation,
+                            rawVariables,
+                            options);
                 }
-                return new QueryTraverser(schema, document, operation, coercedVariables);
+                return new QueryTraverser(schema,
+                        document,
+                        operation,
+                        coercedVariables,
+                        options);
             } else {
                 if (rawVariables != null) {
                     // When traversing with an arbitrary root, there is no variable definition context available
                     // Thus, the variables must have already been coerced
                     // Retaining this builder for backwards compatibility
-                    return new QueryTraverser(schema, root, rootParentType, fragmentsByName, CoercedVariables.of(rawVariables.toMap()));
+                    return new QueryTraverser(schema,
+                            root,
+                            rootParentType,
+                            fragmentsByName,
+                            CoercedVariables.of(rawVariables.toMap()),
+                            options);
                 }
-                return new QueryTraverser(schema, root, rootParentType, fragmentsByName, coercedVariables);
+                return new QueryTraverser(schema,
+                        root,
+                        rootParentType,
+                        fragmentsByName,
+                        coercedVariables,
+                        options);
             }
         }
 

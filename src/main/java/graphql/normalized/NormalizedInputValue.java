@@ -1,5 +1,6 @@
 package graphql.normalized;
 
+import graphql.Assert;
 import graphql.PublicApi;
 import graphql.language.Value;
 
@@ -99,14 +100,14 @@ public class NormalizedInputValue {
 
     private String unwrapOne(String typeName) {
         assertNotNull(typeName);
-        assertTrue(typeName.trim().length() > 0, () -> "We have an empty type name unwrapped");
+        Assert.assertTrue(!typeName.trim().isEmpty(), "We have an empty type name unwrapped");
         if (typeName.endsWith("!")) {
             return typeName.substring(0, typeName.length() - 1);
         }
         if (isListOnly(typeName)) {
             // nominally this will never be true - but better to be safe than sorry
-            assertTrue(typeName.startsWith("["), () -> String.format("We have a unbalanced list type string '%s'", typeName));
-            assertTrue(typeName.endsWith("]"), () -> String.format("We have a unbalanced list type string '%s'", typeName));
+            assertTrue(typeName.startsWith("["), "We have a unbalanced list type string '%s'", typeName);
+            assertTrue(typeName.endsWith("]"), "We have a unbalanced list type string '%s'", typeName);
 
             return typeName.substring(1, typeName.length() - 1);
         }

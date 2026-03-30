@@ -1,5 +1,9 @@
 package graphql;
 
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.NullUnmarked;
+import org.jspecify.annotations.Nullable;
+
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -32,12 +36,13 @@ import static graphql.Assert.assertNotNull;
  * You can set this up via {@link ExecutionInput#getGraphQLContext()}
  *
  * All keys and values in the context MUST be non null.
- *
+ * <p>
  * The class is mutable via a thread safe implementation but it is recommended to try to use this class in an immutable way if you can.
  */
 @PublicApi
 @ThreadSafe
 @SuppressWarnings("unchecked")
+@NullMarked
 public class GraphQLContext {
 
     private final ConcurrentMap<Object, Object> map;
@@ -66,7 +71,7 @@ public class GraphQLContext {
      *
      * @return a value or null
      */
-    public <T> T get(Object key) {
+    public <T> @Nullable T get(Object key) {
         return (T) map.get(assertNotNull(key));
     }
 
@@ -94,6 +99,33 @@ public class GraphQLContext {
     public <T> Optional<T> getOrEmpty(Object key) {
         T t = (T) map.get(assertNotNull(key));
         return Optional.ofNullable(t);
+    }
+
+    /**
+     * This returns true if the value at the specified key is equal to
+     * {@link Boolean#TRUE}
+     *
+     * @param key the key to look up
+     *
+     * @return true if the value is equal to {@link Boolean#TRUE}
+     */
+    public boolean getBoolean(Object key) {
+        Object val = map.get(assertNotNull(key));
+        return Boolean.TRUE.equals(val);
+    }
+
+    /**
+     * This returns true if the value at the specified key is equal to
+     * {@link Boolean#TRUE} or the default value if the key is missing
+     *
+     * @param key          the key to look up
+     * @param defaultValue the value to use if the key is not present
+     *
+     * @return true if the value is equal to {@link Boolean#TRUE}
+     */
+    public boolean getBoolean(Object key, Boolean defaultValue) {
+        Object val = map.getOrDefault(assertNotNull(key), defaultValue);
+        return Boolean.TRUE.equals(val);
     }
 
     /**
@@ -177,13 +209,13 @@ public class GraphQLContext {
      * Attempts to compute a mapping for the specified key and its
      * current mapped value (or null if there is no current mapping).
      *
-     * @param key key with which the specified value is to be associated
+     * @param key               key with which the specified value is to be associated
      * @param remappingFunction the function to compute a value
+     * @param <T>               for two
      *
      * @return the new value associated with the specified key, or null if none
-     * @param <T> for two
      */
-    public <T> T compute(Object key, BiFunction<Object, ? super T, ? extends T> remappingFunction) {
+    public <T> @Nullable T compute(Object key, BiFunction<Object, ? super T, ? extends T> remappingFunction) {
         assertNotNull(remappingFunction);
         return (T) map.compute(assertNotNull(key), (k, v) -> remappingFunction.apply(k, (T) v));
     }
@@ -192,14 +224,14 @@ public class GraphQLContext {
      * If the specified key is not already associated with a value (or is mapped to null),
      * attempts to compute its value using the given mapping function and enters it into this map unless null.
      *
-     * @param key key with which the specified value is to be associated
+     * @param key             key with which the specified value is to be associated
      * @param mappingFunction the function to compute a value
+     * @param <T>             for two
      *
      * @return the current (existing or computed) value associated with the specified key, or null if the computed value is null
-     * @param <T> for two
      */
 
-    public <T> T computeIfAbsent(Object key, Function<Object, ? extends T> mappingFunction) {
+    public <T> @Nullable T computeIfAbsent(Object key, Function<Object, ? extends T> mappingFunction) {
         return (T) map.computeIfAbsent(assertNotNull(key), assertNotNull(mappingFunction));
     }
 
@@ -207,14 +239,14 @@ public class GraphQLContext {
      * If the value for the specified key is present and non-null,
      * attempts to compute a new mapping given the key and its current mapped value.
      *
-     * @param key key with which the specified value is to be associated
+     * @param key               key with which the specified value is to be associated
      * @param remappingFunction the function to compute a value
+     * @param <T>               for two
      *
      * @return the new value associated with the specified key, or null if none
-     * @param <T> for two
      */
 
-    public <T> T computeIfPresent(Object key, BiFunction<Object, ? super T, ? extends T> remappingFunction) {
+    public <T> @Nullable T computeIfPresent(Object key, BiFunction<Object, ? super T, ? extends T> remappingFunction) {
         assertNotNull(remappingFunction);
         return (T) map.computeIfPresent(assertNotNull(key), (k, v) -> remappingFunction.apply(k, (T) v));
     }
@@ -227,7 +259,7 @@ public class GraphQLContext {
     }
 
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
         if (this == o) {
             return true;
         }
@@ -288,6 +320,7 @@ public class GraphQLContext {
         return new Builder();
     }
 
+    @NullUnmarked
     public static class Builder {
         private final ConcurrentMap<Object, Object> map = new ConcurrentHashMap<>();
 
@@ -298,6 +331,15 @@ public class GraphQLContext {
                     key1, value1
             );
         }
+
+        public Object get(Object key) {
+            return map.get(key);
+        }
+
+        public boolean getBoolean(Object key) {
+            return Boolean.parseBoolean(String.valueOf(get(key)));
+        }
+
 
         public Builder of(
                 Object key1, Object value1

@@ -12,6 +12,8 @@ import graphql.language.FragmentDefinition;
 import graphql.language.OperationDefinition;
 import org.dataloader.DataLoader;
 import org.dataloader.DataLoaderRegistry;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 import java.util.Locale;
@@ -70,12 +72,12 @@ public class DelegatingDataFetchingEnvironment implements DataFetchingEnvironmen
     }
 
     @Override
-    public GraphQLContext getGraphQlContext() {
+    public @NonNull GraphQLContext getGraphQlContext() {
         return delegateEnvironment.getGraphQlContext();
     }
 
     @Override
-    public <T> T getLocalContext() {
+    public <T> @Nullable T getLocalContext() {
         return delegateEnvironment.getLocalContext();
     }
 
@@ -146,7 +148,7 @@ public class DelegatingDataFetchingEnvironment implements DataFetchingEnvironmen
     }
 
     @Override
-    public <K, V> DataLoader<K, V> getDataLoader(String dataLoaderName) {
+    public <K, V extends @Nullable Object> @Nullable DataLoader<K, V> getDataLoader(String dataLoaderName) {
         return delegateEnvironment.getDataLoader(dataLoaderName);
     }
 
@@ -173,5 +175,10 @@ public class DelegatingDataFetchingEnvironment implements DataFetchingEnvironmen
     @Override
     public Map<String, Object> getVariables() {
         return delegateEnvironment.getVariables();
+    }
+
+    @Override
+    public Object toInternal() {
+        return delegateEnvironment.toInternal();
     }
 }

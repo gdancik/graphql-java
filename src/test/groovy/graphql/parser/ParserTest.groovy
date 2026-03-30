@@ -1,6 +1,5 @@
 package graphql.parser
 
-
 import graphql.language.Argument
 import graphql.language.ArrayValue
 import graphql.language.AstComparator
@@ -45,8 +44,6 @@ import org.antlr.v4.runtime.ParserRuleContext
 import spock.lang.Issue
 import spock.lang.Specification
 import spock.lang.Unroll
-
-import static graphql.parser.ParserEnvironment.*
 
 class ParserTest extends Specification {
 
@@ -384,7 +381,7 @@ class ParserTest extends Specification {
                 .build()
 
         when:
-        def parserEnvironment = newParserEnvironment().document(input).parserOptions(parserOptionsWithoutCaptureLineComments).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).parserOptions(parserOptionsWithoutCaptureLineComments).build()
         def document = new Parser().parseDocument(parserEnvironment)
         Field helloField = (document.definitions[0] as OperationDefinition).selectionSet.selections[0] as Field
 
@@ -753,7 +750,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
         when:
         def captureIgnoredCharsTRUE = ParserOptions.newParserOptions().captureIgnoredChars(true).build()
 
-        def parserEnvironment = newParserEnvironment().document(input).parserOptions(captureIgnoredCharsTRUE).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).parserOptions(captureIgnoredCharsTRUE).build()
 
         Document document = new Parser().parseDocument(parserEnvironment)
         def field = (document.definitions[0] as OperationDefinition).selectionSet.selections[0]
@@ -851,7 +848,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
                }
     '''
         when:
-        def parserEnvironment = newParserEnvironment().document(input).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).build()
 
         Document document = Parser.parse(parserEnvironment)
         OperationDefinition operationDefinition = (document.definitions[0] as OperationDefinition)
@@ -965,6 +962,22 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
     }
 
     @Unroll
+    def 'parse ast field definition #valueLiteral'() {
+        expect:
+        def fieldDefinition = Parser.parseFieldDefinition(valueLiteral)
+        AstPrinter.printAstCompact(fieldDefinition) == valueLiteral
+
+        where:
+        valueLiteral                                              | _
+        'foo: Foo'                                                | _
+        'foo(a:String): Foo'                                      | _
+        'foo(a:String!,b:Int!): Foo'                              | _
+        'foo(a:String! ="defaultValue",b:Int!): Foo'              | _
+        'foo(a:String!,b:Int!): Foo @directive(someValue:String)' | _
+    }
+
+
+    @Unroll
     def 'parse ast literals #valueLiteral'() {
         expect:
         Parser.parseValue(valueLiteral) in expectedValue
@@ -1026,7 +1039,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
         def captureIgnoredCharsTRUE = ParserOptions.newParserOptions().captureIgnoredChars(true).build()
 
         when: "explicitly off"
-        def parserEnvironment = newParserEnvironment().document(s).parserOptions(captureIgnoredCharsFALSE).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(s).parserOptions(captureIgnoredCharsFALSE).build()
         def doc = new Parser().parseDocument(parserEnvironment)
         def type = doc.getDefinitionsOfType(ObjectTypeDefinition)[0]
         then:
@@ -1042,7 +1055,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
 
         when: "explicitly on"
 
-        parserEnvironment = newParserEnvironment().document(s).parserOptions(captureIgnoredCharsTRUE).build()
+        parserEnvironment = ParserEnvironment.newParserEnvironment().document(s).parserOptions(captureIgnoredCharsTRUE).build()
         doc = new Parser().parseDocument(parserEnvironment)
         type = doc.getDefinitionsOfType(ObjectTypeDefinition)[0]
 
@@ -1143,7 +1156,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
 
         when:
         options = ParserOptions.newParserOptions().captureSourceLocation(false).build()
-        def parserEnvironment = newParserEnvironment().document("{ f }").parserOptions(options).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document("{ f }").parserOptions(options).build()
         document = new Parser().parseDocument(parserEnvironment)
 
         then:
@@ -1154,7 +1167,7 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
 
     def "escape characters correctly printed when printing AST"() {
         given:
-        def env = newParserEnvironment()
+        def env = ParserEnvironment.newParserEnvironment()
                 .document(src)
                 .parserOptions(
                         ParserOptions.newParserOptions()
@@ -1188,4 +1201,70 @@ triple3 : """edge cases \\""" "" " \\"" \\" edge cases"""
         "\"\t\" scalar A"   | _
     }
 
+    def "can redact tokens in InvalidSyntax parser error message"() {
+        given:
+        def input = '''""" scalar ComputerSaysNo'''
+
+        when: // Default options do not redact error messages
+        Parser.parse(input)
+
+        then:
+        InvalidSyntaxException e = thrown(InvalidSyntaxException)
+        e.message == '''Invalid syntax with ANTLR error 'token recognition error at: '""" scalar ComputerSaysNo'' at line 1 column 1'''
+
+        when: // Enable redacted parser error messages
+        def redactParserErrorMessages = ParserOptions.newParserOptions().redactTokenParserErrorMessages(true).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).parserOptions(redactParserErrorMessages).build()
+        new Parser().parseDocument(parserEnvironment)
+
+        then:
+        InvalidSyntaxException redactedError = thrown(InvalidSyntaxException)
+        redactedError.message == "Invalid syntax at line 1 column 1"
+    }
+
+    def "can redact tokens in InvalidSyntaxBail parser error message"() {
+        given:
+        def input = '''
+            query {
+              computer says no!!!!!!
+        '''
+
+        when: // Default options do not redact error messages
+        Parser.parse(input)
+
+        then:
+        InvalidSyntaxException e = thrown(InvalidSyntaxException)
+        e.message == "Invalid syntax with offending token '!' at line 3 column 31"
+
+        when: // Enable redacted parser error messages
+        def redactParserErrorMessages = ParserOptions.newParserOptions().redactTokenParserErrorMessages(true).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).parserOptions(redactParserErrorMessages).build()
+        new Parser().parseDocument(parserEnvironment)
+
+        then:
+        InvalidSyntaxException redactedError = thrown(InvalidSyntaxException)
+        redactedError.message == "Invalid syntax at line 3 column 31"
+    }
+
+    def "can redact tokens in InvalidSyntaxMoreTokens parser error message"() {
+        given:
+        def input = "{profile(id:117) {computer, says, no}}}"
+
+
+        when: // Default options do not redact error messages
+        Parser.parse(input)
+
+        then:
+        InvalidSyntaxException e = thrown(InvalidSyntaxException)
+        e.message == "Invalid syntax encountered. There are extra tokens in the text that have not been consumed. Offending token '}' at line 1 column 39"
+
+        when: // Enable redacted parser error messages
+        def redactParserErrorMessages = ParserOptions.newParserOptions().redactTokenParserErrorMessages(true).build()
+        def parserEnvironment = ParserEnvironment.newParserEnvironment().document(input).parserOptions(redactParserErrorMessages).build()
+        new Parser().parseDocument(parserEnvironment)
+
+        then:
+        InvalidSyntaxException redactedError = thrown(InvalidSyntaxException)
+        redactedError.message == "Invalid syntax encountered. There are extra tokens in the text that have not been consumed. Offending token at line 1 column 39"
+    }
 }

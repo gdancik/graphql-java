@@ -2,8 +2,8 @@ package graphql.normalized.incremental;
 
 import graphql.ExperimentalApi;
 import graphql.schema.GraphQLObjectType;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import java.util.Set;
 
 /**

@@ -48,6 +48,7 @@ import graphql.schema.GraphQLInputType;
 import graphql.schema.GraphQLInterfaceType;
 import graphql.schema.GraphQLNamedInputType;
 import graphql.schema.GraphQLNamedOutputType;
+import graphql.schema.GraphQLNamedType;
 import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLScalarType;
@@ -56,7 +57,7 @@ import graphql.schema.GraphQLType;
 import graphql.schema.GraphQLTypeReference;
 import graphql.schema.GraphQLUnionType;
 import graphql.schema.GraphqlTypeComparatorRegistry;
-import graphql.schema.PropertyDataFetcher;
+import graphql.schema.SingletonPropertyDataFetcher;
 import graphql.schema.TypeResolver;
 import graphql.schema.TypeResolverProxy;
 import graphql.schema.idl.errors.NotAnInputTypeError;
@@ -111,19 +112,19 @@ public class SchemaGeneratorHelper {
      * it gives us helper functions
      */
     static class BuildContext {
-        private final TypeDefinitionRegistry typeRegistry;
+        private final ImmutableTypeDefinitionRegistry typeRegistry;
         private final RuntimeWiring wiring;
         private final Deque<String> typeStack = new ArrayDeque<>();
 
-        private final Map<String, GraphQLOutputType> outputGTypes = new LinkedHashMap<>();
-        private final Map<String, GraphQLInputType> inputGTypes = new LinkedHashMap<>();
+        private final Map<String, GraphQLNamedOutputType> outputGTypes = new LinkedHashMap<>();
+        private final Map<String, GraphQLNamedInputType> inputGTypes = new LinkedHashMap<>();
         private final Set<GraphQLDirective> directives = new LinkedHashSet<>();
         private final GraphQLCodeRegistry.Builder codeRegistry;
         public final Map<String, OperationTypeDefinition> operationTypeDefs;
         public final SchemaGenerator.Options options;
         public boolean directiveWiringRequired;
 
-        BuildContext(TypeDefinitionRegistry typeRegistry, RuntimeWiring wiring, Map<String, OperationTypeDefinition> operationTypeDefinitions, SchemaGenerator.Options options) {
+        BuildContext(ImmutableTypeDefinitionRegistry typeRegistry, RuntimeWiring wiring, Map<String, OperationTypeDefinition> operationTypeDefinitions, SchemaGenerator.Options options) {
             this.typeRegistry = typeRegistry;
             this.wiring = wiring;
             this.codeRegistry = GraphQLCodeRegistry.newCodeRegistry(wiring.getCodeRegistry());
@@ -141,11 +142,12 @@ public class SchemaGeneratorHelper {
         }
 
         TypeDefinition<?> getTypeDefinition(Type<?> type) {
-            Optional<TypeDefinition> optionalTypeDefinition = typeRegistry.getType(type);
-
-            return optionalTypeDefinition.orElseThrow(
-                    () -> new AssertException(format(" type definition for type '%s' not found", type))
-            );
+            TypeDefinition<?> typeDefinition = typeRegistry.getTypeOrNull(type);
+            if (typeDefinition != null) {
+                return typeDefinition;
+            } else {
+                throw new AssertException(format(" type definition for type '%s' not found", type));
+            }
         }
 
         boolean stackContains(TypeInfo typeInfo) {
@@ -172,7 +174,7 @@ public class SchemaGeneratorHelper {
             outputGTypes.put(outputType.getName(), outputType);
             // certain types can be both input and output types, for example enums and scalars
             if (outputType instanceof GraphQLInputType) {
-                inputGTypes.put(outputType.getName(), (GraphQLInputType) outputType);
+                inputGTypes.put(outputType.getName(), (GraphQLNamedInputType) outputType);
             }
         }
 
@@ -180,7 +182,7 @@ public class SchemaGeneratorHelper {
             inputGTypes.put(inputType.getName(), inputType);
             // certain types can be both input and output types, for example enums and scalars
             if (inputType instanceof GraphQLOutputType) {
-                outputGTypes.put(inputType.getName(), (GraphQLOutputType) inputType);
+                outputGTypes.put(inputType.getName(), (GraphQLNamedOutputType) inputType);
             }
         }
 
@@ -206,6 +208,17 @@ public class SchemaGeneratorHelper {
 
         public Set<GraphQLDirective> getDirectives() {
             return directives;
+        }
+
+        /**
+         * Returns all types that have been built so far (both input and output types).
+         * This is used by FastSchemaGenerator to collect types for FastBuilder.
+         */
+        public Set<GraphQLType> getTypes() {
+            Set<GraphQLType> allTypes = new LinkedHashSet<>();
+            allTypes.addAll(outputGTypes.values());
+            allTypes.addAll(inputGTypes.values());
+            return allTypes;
         }
 
         public boolean isCaptureAstDefinitions() {
@@ -401,7 +414,7 @@ public class SchemaGeneratorHelper {
         if (enumValuesProvider != null) {
             value = enumValuesProvider.getValue(evd.getName());
             assertNotNull(value,
-                    () -> format("EnumValuesProvider for %s returned null for %s", typeDefinition.getName(), evd.getName()));
+                    "EnumValuesProvider for %s returned null for %s", typeDefinition.getName(), evd.getName());
         } else {
             value = evd.getName();
         }
@@ -504,7 +517,7 @@ public class SchemaGeneratorHelper {
 
         if (wiringFactory.providesTypeResolver(environment)) {
             typeResolver = wiringFactory.getTypeResolver(environment);
-            assertNotNull(typeResolver, () -> "The WiringFactory indicated it provides a interface type resolver but then returned null");
+            assertNotNull(typeResolver, "The WiringFactory indicated it provides a interface type resolver but then returned null");
 
         } else {
             typeResolver = wiring.getTypeResolvers().get(interfaceType.getName());
@@ -526,7 +539,7 @@ public class SchemaGeneratorHelper {
 
         if (wiringFactory.providesTypeResolver(environment)) {
             typeResolver = wiringFactory.getTypeResolver(environment);
-            assertNotNull(typeResolver, () -> "The WiringFactory indicated it union provides a type resolver but then returned null");
+            assertNotNull(typeResolver, "The WiringFactory indicated it union provides a type resolver but then returned null");
 
         } else {
             typeResolver = wiring.getTypeResolvers().get(unionType.getName());
@@ -801,23 +814,27 @@ public class SchemaGeneratorHelper {
         // if they have already wired in a fetcher - then leave it alone
         FieldCoordinates coordinates = FieldCoordinates.coordinates(parentType.getName(), fieldDefinition.getName());
         if (!buildCtx.getCodeRegistry().hasDataFetcher(coordinates)) {
-            DataFetcherFactory<?> dataFetcherFactory = buildDataFetcherFactory(buildCtx,
+            Optional<DataFetcherFactory<?>> dataFetcherFactory = buildDataFetcherFactory(buildCtx,
                     parentType,
                     fieldDef,
                     fieldType,
                     appliedDirectives.first,
                     appliedDirectives.second);
-            buildCtx.getCodeRegistry().dataFetcher(coordinates, dataFetcherFactory);
+
+            // if the dataFetcherFactory is empty, then it must have been the code registry default one
+            // and hence we don't need to make a "map entry" in the code registry since it will be defaulted
+            // anyway
+            dataFetcherFactory.ifPresent(fetcherFactory -> buildCtx.getCodeRegistry().dataFetcher(coordinates, fetcherFactory));
         }
         return directivesObserve(buildCtx, fieldDefinition);
     }
 
-    private DataFetcherFactory<?> buildDataFetcherFactory(BuildContext buildCtx,
-                                                          TypeDefinition<?> parentType,
-                                                          FieldDefinition fieldDef,
-                                                          GraphQLOutputType fieldType,
-                                                          List<GraphQLDirective> directives,
-                                                          List<GraphQLAppliedDirective> appliedDirectives) {
+    private Optional<DataFetcherFactory<?>> buildDataFetcherFactory(BuildContext buildCtx,
+                                                                    TypeDefinition<?> parentType,
+                                                                    FieldDefinition fieldDef,
+                                                                    GraphQLOutputType fieldType,
+                                                                    List<GraphQLDirective> directives,
+                                                                    List<GraphQLAppliedDirective> appliedDirectives) {
         String fieldName = fieldDef.getName();
         String parentTypeName = parentType.getName();
         TypeDefinitionRegistry typeRegistry = buildCtx.getTypeRegistry();
@@ -830,16 +847,16 @@ public class SchemaGeneratorHelper {
         DataFetcherFactory<?> dataFetcherFactory;
         if (wiringFactory.providesDataFetcherFactory(wiringEnvironment)) {
             dataFetcherFactory = wiringFactory.getDataFetcherFactory(wiringEnvironment);
-            assertNotNull(dataFetcherFactory, () -> "The WiringFactory indicated it provides a data fetcher factory but then returned null");
+            assertNotNull(dataFetcherFactory, "The WiringFactory indicated it provides a data fetcher factory but then returned null");
         } else {
             //
             // ok they provide a data fetcher directly
             DataFetcher<?> dataFetcher;
             if (wiringFactory.providesDataFetcher(wiringEnvironment)) {
                 dataFetcher = wiringFactory.getDataFetcher(wiringEnvironment);
-                assertNotNull(dataFetcher, () -> "The WiringFactory indicated it provides a data fetcher but then returned null");
+                assertNotNull(dataFetcher, "The WiringFactory indicated it provides a data fetcher but then returned null");
             } else {
-                dataFetcher = runtimeWiring.getDataFetcherForType(parentTypeName).get(fieldName);
+                dataFetcher = runtimeWiring.getDataFetchersForType(parentTypeName).get(fieldName);
                 if (dataFetcher == null) {
                     dataFetcher = runtimeWiring.getDefaultDataFetcherForType(parentTypeName);
                     if (dataFetcher == null) {
@@ -847,16 +864,18 @@ public class SchemaGeneratorHelper {
                         if (dataFetcher == null) {
                             DataFetcherFactory<?> codeRegistryDFF = codeRegistry.getDefaultDataFetcherFactory();
                             if (codeRegistryDFF != null) {
-                                return codeRegistryDFF;
+                                // this will use the default of the code registry when its
+                                // asked for at runtime
+                                return Optional.empty();
                             }
-                            dataFetcher = dataFetcherOfLastResort(wiringEnvironment);
+                            dataFetcher = dataFetcherOfLastResort();
                         }
                     }
                 }
             }
             dataFetcherFactory = DataFetcherFactories.useDataFetcher(dataFetcher);
         }
-        return dataFetcherFactory;
+        return Optional.of(dataFetcherFactory);
     }
 
     GraphQLArgument buildArgument(BuildContext buildCtx, InputValueDefinition valueDefinition) {
@@ -899,9 +918,8 @@ public class SchemaGeneratorHelper {
         GraphQLObjectType subscription;
 
         Optional<OperationTypeDefinition> queryOperation = getOperationNamed("query", operationTypeDefs);
-        if (!queryOperation.isPresent()) {
-            @SuppressWarnings({"OptionalGetWithoutIsPresent"})
-            TypeDefinition<?> queryTypeDef = typeRegistry.getType("Query").get();
+        if (queryOperation.isEmpty()) {
+            TypeDefinition<?> queryTypeDef = Objects.requireNonNull(typeRegistry.getTypeOrNull("Query"));
             query = buildOutputType(buildCtx, TypeName.newTypeName().name(queryTypeDef.getName()).build());
         } else {
             query = buildOperation(buildCtx, queryOperation.get());
@@ -909,12 +927,12 @@ public class SchemaGeneratorHelper {
         schemaBuilder.query(query);
 
         Optional<OperationTypeDefinition> mutationOperation = getOperationNamed("mutation", operationTypeDefs);
-        if (!mutationOperation.isPresent()) {
-            if (!typeRegistry.schemaDefinition().isPresent()) {
+        if (mutationOperation.isEmpty()) {
+            if (typeRegistry.schemaDefinition().isEmpty()) {
                 // If no schema definition, then there is no schema keyword. Default to using type called Mutation
-                Optional<TypeDefinition> mutationTypeDef = typeRegistry.getType("Mutation");
-                if (mutationTypeDef.isPresent()) {
-                    mutation = buildOutputType(buildCtx, TypeName.newTypeName().name(mutationTypeDef.get().getName()).build());
+                TypeDefinition<?> mutationTypeDef = typeRegistry.getTypeOrNull("Mutation");
+                if (mutationTypeDef != null) {
+                    mutation = buildOutputType(buildCtx, TypeName.newTypeName().name(mutationTypeDef.getName()).build());
                     schemaBuilder.mutation(mutation);
                 }
             }
@@ -924,12 +942,12 @@ public class SchemaGeneratorHelper {
         }
 
         Optional<OperationTypeDefinition> subscriptionOperation = getOperationNamed("subscription", operationTypeDefs);
-        if (!subscriptionOperation.isPresent()) {
-            if (!typeRegistry.schemaDefinition().isPresent()) {
+        if (subscriptionOperation.isEmpty()) {
+            if (typeRegistry.schemaDefinition().isEmpty()) {
                 // If no schema definition, then there is no schema keyword. Default to using type called Subscription
-                Optional<TypeDefinition> subscriptionTypeDef = typeRegistry.getType("Subscription");
-                if (subscriptionTypeDef.isPresent()) {
-                    subscription = buildOutputType(buildCtx, TypeName.newTypeName().name(subscriptionTypeDef.get().getName()).build());
+                TypeDefinition<?> subscriptionTypeDef = typeRegistry.getTypeOrNull("Subscription");
+                if (subscriptionTypeDef != null) {
+                    subscription = buildOutputType(buildCtx, TypeName.newTypeName().name(subscriptionTypeDef.getName()).build());
                     schemaBuilder.subscription(subscription);
                 }
             }
@@ -990,12 +1008,12 @@ public class SchemaGeneratorHelper {
      *
      * @return the additional types not referenced from the top level operations
      */
-    Set<GraphQLType> buildAdditionalTypes(BuildContext buildCtx) {
+    Set<GraphQLNamedType> buildAdditionalTypes(BuildContext buildCtx) {
         TypeDefinitionRegistry typeRegistry = buildCtx.getTypeRegistry();
 
         Set<String> detachedTypeNames = getDetachedTypeNames(buildCtx);
 
-        Set<GraphQLType> additionalTypes = new LinkedHashSet<>();
+        Set<GraphQLNamedType> additionalTypes = new LinkedHashSet<>();
         // recursively record detached types on the ctx and add them to the additionalTypes set
         typeRegistry.types().values().stream()
                 .filter(typeDefinition -> detachedTypeNames.contains(typeDefinition.getName()))
@@ -1087,9 +1105,8 @@ public class SchemaGeneratorHelper {
         return Optional.ofNullable(operationTypeDefs.get(name));
     }
 
-    private DataFetcher<?> dataFetcherOfLastResort(FieldWiringEnvironment environment) {
-        String fieldName = environment.getFieldDefinition().getName();
-        return new PropertyDataFetcher(fieldName);
+    private DataFetcher<?> dataFetcherOfLastResort() {
+        return SingletonPropertyDataFetcher.singleton();
     }
 
     private List<Directive> directivesOf(List<? extends TypeDefinition<?>> typeDefinitions) {

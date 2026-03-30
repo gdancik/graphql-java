@@ -3,20 +3,24 @@ package graphql.normalized
 import graphql.ExecutionInput
 import graphql.GraphQL
 import graphql.TestUtil
+import graphql.execution.AbortExecutionException
 import graphql.execution.CoercedVariables
 import graphql.execution.MergedField
 import graphql.execution.RawVariables
 import graphql.execution.directives.QueryAppliedDirective
+import graphql.introspection.IntrospectionQuery
 import graphql.language.Document
 import graphql.language.Field
 import graphql.language.FragmentDefinition
 import graphql.language.OperationDefinition
+import graphql.schema.GraphQLDirective
 import graphql.schema.GraphQLSchema
 import graphql.schema.GraphQLTypeUtil
 import graphql.util.TraversalControl
 import graphql.util.Traverser
 import graphql.util.TraverserContext
 import graphql.util.TraverserVisitorStub
+import graphql.validation.QueryComplexityLimits
 import spock.lang.Specification
 
 import java.util.stream.Collectors
@@ -27,9 +31,17 @@ import static graphql.language.AstPrinter.printAst
 import static graphql.parser.Parser.parseValue
 import static graphql.schema.FieldCoordinates.coordinates
 
-abstract class ExecutableNormalizedOperationFactoryTest extends Specification {
+class ExecutableNormalizedOperationFactoryTest extends Specification {
     static boolean deferSupport
 
+    def setup() {
+        // Disable validation complexity limits so ENO limits can be tested
+        QueryComplexityLimits.setDefaultLimits(QueryComplexityLimits.NONE)
+    }
+
+    def cleanup() {
+        QueryComplexityLimits.setDefaultLimits(QueryComplexityLimits.DEFAULT)
+    }
 
     def "test"() {
         String schema = """
@@ -1283,7 +1295,6 @@ type Dog implements Animal{
         assertValidQuery(graphQLSchema, query)
 
         Document document = TestUtil.parseQuery(query)
-
 
 
         when:
@@ -2875,6 +2886,381 @@ fragment personName on Person {
         then:
         noExceptionThrown()
     }
+
+    def "big query exceeding fields count"() {
+        String schema = """
+        type Query {
+            animal: Animal
+        }
+        interface Animal {
+            name: String
+            friends: [Friend]
+        }
+        union Pet = Dog | Cat
+        type Friend {
+            name: String
+            isBirdOwner: Boolean
+            isCatOwner: Boolean
+            pets: [Pet] 
+        }
+        type Bird implements Animal {
+            name: String 
+            friends: [Friend]
+        }
+        type Cat implements Animal {
+            name: String 
+            friends: [Friend]
+            breed: String 
+        }
+        type Dog implements Animal {
+            name: String 
+            breed: String
+            friends: [Friend]
+        }
+        """
+
+        def garbageFields = IntStream.range(0, 1000)
+                .mapToObj {
+                    """test_$it: friends { name }"""
+                }
+                .collect(Collectors.joining("\n"))
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = """
+        {
+            animal {
+                name
+                otherName: name
+                ... on Animal {
+                    name
+                }
+                ... on Cat {
+                    name
+                    friends {
+                        ... on Friend {
+                            isCatOwner
+                            pets {
+                                ... on Dog {
+                                    name
+                                }
+                            }
+                        }
+                    }
+                }
+                ... on Bird {
+                    friends {
+                        isBirdOwner
+                    }
+                    friends {
+                        name
+                        pets {
+                            ... on Cat {
+                                breed
+                            }
+                        }
+                    }
+                }
+                ... on Dog {
+                    name
+                }
+                $garbageFields
+            }
+        }        
+        """
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables(),
+                ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(2013))
+
+        then:
+        def e = thrown(AbortExecutionException)
+        e.message == "Maximum field count exceeded. 2014 > 2013"
+    }
+
+    def "small query exceeding fields count"() {
+        String schema = """
+        type Query {
+            hello: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = """ {hello a1: hello}"""
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables(),
+                ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(1))
+
+        then:
+        def e = thrown(AbortExecutionException)
+        e.message == "Maximum field count exceeded. 2 > 1"
+
+
+    }
+
+    def "query not exceeding fields count"() {
+        String schema = """
+        type Query {
+            dogs: [Dog]
+        }
+        type Dog {
+            name: String
+            breed: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = """ {dogs{name breed }}"""
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables(),
+                ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(3))
+
+        then:
+        notThrown(AbortExecutionException)
+
+
+    }
+
+    def "query with meta fields exceeding fields count"() {
+        String schema = """
+        type Query {
+            hello: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = IntrospectionQuery.INTROSPECTION_QUERY
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables(),
+                ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(188))
+        println result.normalizedFieldToMergedField.size()
+
+        then:
+        def e = thrown(AbortExecutionException)
+        e.message == "Maximum field count exceeded. 189 > 188"
+    }
+
+    def "can capture depth and field count"() {
+        String schema = """
+        type Query {
+            foo: Foo
+        }
+        
+        type Foo {
+            stop : String
+            bar : Bar
+        }
+        
+        type Bar {
+            stop : String
+            foo : Foo
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = "{ foo { bar { foo { bar { foo { stop bar { stop }}}}}}}"
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables()
+        )
+
+        then:
+        result.getOperationDepth() == 7
+        result.getOperationFieldCount() == 8
+    }
+
+    def "factory has a default max node count"() {
+        String schema = """
+        type Query {
+            foo: Foo
+        }
+        type Foo {
+            foo: Foo
+            name: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = "{ foo { ...F1}} "
+        int fragmentCount = 12
+        for (int i = 1; i < fragmentCount; i++) {
+            query += """
+             fragment F$i on Foo {
+                foo { ...F${i + 1} }
+                a: foo{ ...F${i + 1} }
+                b: foo{ ...F${i + 1} }
+             }
+            """
+        }
+        query += """
+        fragment F$fragmentCount on Foo{
+            name
+        }
+        """
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables()
+        )
+        then:
+        def e = thrown(AbortExecutionException)
+        e.message == "Maximum field count exceeded. 100001 > 100000"
+    }
+
+    def "default max fields can be changed "() {
+        String schema = """
+        type Query {
+            foo: Foo
+        }
+        type Foo {
+            foo: Foo
+            name: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = "{foo{foo{name}}} "
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+        ExecutableNormalizedOperationFactory.Options.setDefaultOptions(ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(2))
+
+        when:
+        def result = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables()
+        )
+        then:
+        def e = thrown(AbortExecutionException)
+        e.message == "Maximum field count exceeded. 3 > 2"
+        cleanup:
+        ExecutableNormalizedOperationFactory.Options.setDefaultOptions(ExecutableNormalizedOperationFactory.Options.defaultOptions().maxFieldsCount(ExecutableNormalizedOperationFactory.Options.DEFAULT_MAX_FIELDS_COUNT))
+    }
+
+    def "fragments used multiple times and directives on it"() {
+        String schema = """
+        type Query {
+            foo: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = "{...F1 ...F1 } fragment F1 on Query { foo @include(if: true) } "
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+        when:
+        def operation = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables()
+        )
+        def rootField = operation.topLevelFields[0]
+        def directives = operation.getQueryDirectives(rootField)
+        def byName = directives.getImmediateDirectivesByName();
+        then:
+        byName.size() == 1
+        byName["include"].size() == 1
+        byName["include"][0] instanceof GraphQLDirective
+    }
+
+    def "fragments used multiple times and directives on it deeper"() {
+        String schema = """
+        type Query {
+            foo: Foo
+        }
+        type Foo {
+            hello: String
+        }
+        """
+
+        GraphQLSchema graphQLSchema = TestUtil.schema(schema)
+
+        String query = "{foo{...F1  ...F1 } } fragment F1 on Foo { hello @include(if: true) hello @include(if:true) } "
+
+        assertValidQuery(graphQLSchema, query)
+
+        Document document = TestUtil.parseQuery(query)
+        when:
+        def operation = ExecutableNormalizedOperationFactory.createExecutableNormalizedOperationWithRawVariables(
+                graphQLSchema,
+                document,
+                null,
+                RawVariables.emptyVariables()
+        )
+        def enf = operation.topLevelFields[0].children[0]
+        def directives = operation.getQueryDirectives(enf)
+        def byName = directives.getImmediateDirectivesByName();
+        then:
+        byName.size() == 1
+        byName["include"].size() == 2
+        byName["include"][0] instanceof GraphQLDirective
+        byName["include"][1] instanceof GraphQLDirective
+        byName["include"][0] != byName["include"][1]
+    }
+
 
     private static ExecutableNormalizedOperation localCreateExecutableNormalizedOperation(
             GraphQLSchema graphQLSchema,

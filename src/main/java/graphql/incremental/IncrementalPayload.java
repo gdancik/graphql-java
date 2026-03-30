@@ -1,17 +1,16 @@
 package graphql.incremental;
 
-import graphql.ExecutionResult;
 import graphql.ExperimentalApi;
 import graphql.GraphQLError;
 import graphql.execution.ResultPath;
+import graphql.util.FpKit;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import static java.util.stream.Collectors.toList;
+import java.util.Objects;
 
 /**
  * Represents a payload that can be resolved after the initial response.
@@ -61,7 +60,7 @@ public abstract class IncrementalPayload {
         return this.extensions;
     }
 
-    protected Map<String, Object> toSpecification() {
+    public Map<String, Object> toSpecification() {
         Map<String, Object> result = new LinkedHashMap<>();
 
         result.put("path", path);
@@ -80,9 +79,30 @@ public abstract class IncrementalPayload {
     }
 
     protected Object errorsToSpec(List<GraphQLError> errors) {
-        return errors.stream().map(GraphQLError::toSpecification).collect(toList());
+        List<Map<String, Object>> list = FpKit.arrayListSizedTo(errors);
+        for (GraphQLError error : errors) {
+            list.add(error.toSpecification());
+        }
+        return list;
     }
 
+    public int hashCode() {
+        return Objects.hash(path, label, errors, extensions);
+    }
+
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null || getClass() != obj.getClass()) {
+            return false;
+        }
+        IncrementalPayload that = (IncrementalPayload) obj;
+        return Objects.equals(path, that.path) &&
+                Objects.equals(label, that.label) &&
+                Objects.equals(errors, that.errors) &&
+                Objects.equals(extensions, that.extensions);
+    }
 
     protected static abstract class Builder<T extends Builder<T>> {
         protected List<Object> path;
@@ -122,25 +142,25 @@ public abstract class IncrementalPayload {
             return (T) this;
         }
 
-        public Builder<T> addErrors(List<GraphQLError> errors) {
+        public T addErrors(List<GraphQLError> errors) {
             this.errors.addAll(errors);
-            return this;
+            return (T) this;
         }
 
-        public Builder<T> addError(GraphQLError error) {
+        public T addError(GraphQLError error) {
             this.errors.add(error);
-            return this;
+            return (T) this;
         }
 
-        public Builder<T> extensions(Map<Object, Object> extensions) {
+        public T extensions(Map<Object, Object> extensions) {
             this.extensions = extensions;
-            return this;
+            return (T) this;
         }
 
-        public Builder<T> addExtension(String key, Object value) {
+        public T addExtension(String key, Object value) {
             this.extensions = (this.extensions == null ? new LinkedHashMap<>() : this.extensions);
             this.extensions.put(key, value);
-            return this;
+            return (T) this;
         }
     }
 }

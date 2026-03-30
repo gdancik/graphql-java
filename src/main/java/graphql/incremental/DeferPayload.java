@@ -3,11 +3,12 @@ package graphql.incremental;
 import graphql.ExecutionResult;
 import graphql.ExperimentalApi;
 import graphql.GraphQLError;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Represents a defer payload
@@ -22,12 +23,12 @@ public class DeferPayload extends IncrementalPayload {
     }
 
     /**
-     * @return the resolved data
      * @param <T> the type to cast the result to
+     * @return the resolved data
      */
     @Nullable
     public <T> T getData() {
-        //noinspection unchecked
+        // noinspection unchecked
         return (T) this.data;
     }
 
@@ -37,12 +38,22 @@ public class DeferPayload extends IncrementalPayload {
     @Override
     public Map<String, Object> toSpecification() {
         Map<String, Object> map = new LinkedHashMap<>(super.toSpecification());
-
-        if (data != null) {
-            map.put("data", data);
-        }
-
+        map.put("data", data);
         return map;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), data);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (!super.equals(obj)) return false;
+        DeferPayload that = (DeferPayload) obj;
+        return Objects.equals(data, that.data);
     }
 
     /**
